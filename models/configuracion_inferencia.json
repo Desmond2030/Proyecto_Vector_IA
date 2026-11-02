@@ -1,0 +1,8 @@
+{
+  "modelo_1": "binary_modelo_74_accur.keras",
+  "modelo_2": "regression_model.keras",
+  "scaler": "scaler.pkl",
+  "umbral": 0.8,
+  "riesgo_medio": 0.3,
+  "riesgo_alto": 0.7
+}
