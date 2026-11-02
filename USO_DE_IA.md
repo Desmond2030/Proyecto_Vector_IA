@@ -247,3 +247,49 @@ Solo consulta
 **Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
 
 **Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Incorporación de la licencia MIT del remoto
+
+**Fecha:** 2026-11-02 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), conector GitHub, Git, Python y PowerShell/WSL.
+
+**Prompt utilizado:** «revisa el git de"\\wsl.localhost\Ubuntu-24.04\home\hadoop\CUC\IA_Aplicada\Proyecto_VectorIA" y el remoto para verificar que la licecia en el repositorio se integre dentro del proyecto actual».
+
+**Tareas realizadas:**
+- Revisión de la rama local feature/Modelo_CNN, del estado limpio del árbol de trabajo y de origin (Desmond2030/Proyecto_Vector_IA).
+- Consulta directa del remoto: main contiene LICENSE con licencia MIT y copyright 2026 de Desmond Akin Bermúdez Rodríguez. El archivo no estaba en la rama local.
+- Comprobación de que el commit local d406552 y origin/main (0536cf4) no comparten ancestro; se distingue la incorporación del archivo de una unión de historiales.
+- Copia exacta a la raíz del archivo LICENSE cuyo blob remoto es 9b8684053ad8f3331ceb8946bca36012fe3c654d, verificando coincidencia con el objeto ya disponible en Git local y preservando íntegramente texto y autoría.
+- Verificación de igualdad de bytes y de blob, conservación del contenido previo de este registro y ausencia de cambios en HEAD e índice. Quedan LICENSE sin seguimiento y esta entrada documental pendientes de incorporar por el desarrollador.
+- Sin modificar código, datos, modelos, README o AGENTS; sin merge, rebase, staging, commit ni push. Los historiales siguen independientes.
+
+**Archivos modificados:** LICENSE (nuevo) y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Unificación de historiales local y remoto
+
+**Fecha:** 2026-11-02 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Git, Python y PowerShell/WSL.
+
+**Prompt utilizado:** «unifica los historiales».
+
+**Tareas realizadas:**
+- Actualización de referencias de origin mediante fetch; comprobación de feature/Modelo_CNN (d406552) y origin/main (0536cf4), con raíces independientes.
+- Revisión de cambios pendientes: únicamente la licencia previamente copiada y su entrada de uso de IA. Respaldo temporal de LICENSE y los registros antes del merge.
+- Preparación sin conflictos del merge de origin/main mediante --allow-unrelated-histories, preservando los dos historiales originales y el contenido local del proyecto.
+- Incorporación de Historia_02 al contexto, conservación de todos los registros previos y adición de esta intervención.
+- Creación del commit local de merge con dos padres, comprobación de ascendencia de ambas raíces, licencia idéntica a origin/main y ausencia de cambios ajenos a LICENSE y los dos documentos de registro.
+- Sin cambios de código, datos, modelos o notebooks; sin entrenamiento, rebase, push ni modificación de main en el remoto.
+
+**Archivos modificados:** LICENSE, Proyect_Context/General_Context_File.md y USO_DE_IA.md. Se incluyen en el commit de merge los cambios pendientes de la intervención anterior relativos a la licencia.
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.

@@ -39,3 +39,25 @@ Agente:ChatGPT (Codex)
 
 Archivos_manipulados_por_el_agente: `Proyect_Context/General_Context_File.md` y `USO_DE_IA.md` (solo adiciones). El código, notebooks, modelos, datos y documentos heredados restantes se consultaron sin modificarlos.
 -------------------------------------------------------------
+
+
+-------------------------------------------------------------
+# Historia_02:
+## **Unificación del historial local de VectorIA con la licencia del repositorio remoto**.
+
+**Fecha:** 2026-11-02 (America/Costa_Rica).
+
+**Notas_Importantes:** Esta historia continúa Historia_01 sin alterar sus antecedentes. El desarrollador ya había creado el commit local d406552 en feature/Modelo_CNN. El remoto origin/main contenía el commit inicial independiente 0536cf4 con la licencia MIT; no existía un ancestro común entre ambos historiales.
+
+Agente:**Humano**-> Desmond
+- Solicita: «unifica los historiales», después de revisar la ausencia local de la licencia y la separación entre ambas raíces de Git. Esta petición autoriza completar el merge local; no incluye publicación al remoto.
+
+Agente:ChatGPT (Codex)
+- Actualiza las referencias de origin y comprueba que main contiene únicamente LICENSE, idéntico a la copia incorporada en la intervención anterior.
+- Respalda temporalmente la licencia y los documentos fuera del proyecto y prepara un merge con --allow-unrelated-histories, conservando la rama feature/Modelo_CNN y los dos commits originales como padres.
+- El merge se prepara sin conflictos. Se incorporan la licencia, el registro anterior pendiente en USO_DE_IA.md, esta historia y el registro de la unión.
+- Se verifica que no hay modificaciones de código, notebooks, datos ni modelos respecto al commit local anterior; la licencia conserva el contenido del remoto. Se completa el commit de merge y se comprueba que ambas raíces son ancestros del nuevo HEAD.
+- No se realiza rebase, reescritura de commits anteriores ni push. La referencia remota main permanece sin modificar; la unión queda realizada localmente en feature/Modelo_CNN.
+
+Archivos_manipulados: LICENSE (incorporado por el merge), Proyect_Context/General_Context_File.md y USO_DE_IA.md (solo adiciones). Git actualiza el índice y el historial local para completar el merge.
+-------------------------------------------------------------
