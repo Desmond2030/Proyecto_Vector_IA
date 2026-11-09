@@ -1,0 +1,69 @@
+{
+  "cnn": {
+    "archivo": null,
+    "columnas": [],
+    "clases": [
+      "aegypti",
+      "albopictus",
+      "anopheles",
+      "culex"
+    ],
+    "scaler": null,
+    "scaler_salida": null,
+    "ventana": 26,
+    "horizonte": 4,
+    "fecha": "fecha_inicio_semana",
+    "grupo": "provincia",
+    "objetivo": "casos_dengue",
+    "normalizacion": "interna",
+    "clase_deteccion": "aegypti"
+  },
+  "rnn": {
+    "archivo": null,
+    "columnas": [
+      "casos_dengue",
+      "lluvia_mm",
+      "temp_max_c",
+      "temp_min_c",
+      "humedad_rel_pct"
+    ],
+    "clases": [],
+    "scaler": null,
+    "scaler_salida": null,
+    "ventana": 26,
+    "horizonte": 4,
+    "fecha": "fecha_inicio_semana",
+    "grupo": "provincia",
+    "objetivo": "casos_dengue",
+    "normalizacion": "interna",
+    "clase_deteccion": "aegypti"
+  },
+  "ann": {
+    "archivo": null,
+    "columnas": [
+      "casos_pred_4sem",
+      "casos_umbral_endemico",
+      "lluvia_14d_mm",
+      "temp_max",
+      "temp_min",
+      "humedad",
+      "aegypti_detectado",
+      "semana_epi"
+    ],
+    "clases": [
+      "monitoreo_normal",
+      "eliminacion_criaderos",
+      "fumigacion_focalizada",
+      "alerta_sanitaria"
+    ],
+    "scaler": null,
+    "scaler_salida": null,
+    "ventana": 26,
+    "horizonte": 4,
+    "fecha": "fecha_inicio_semana",
+    "grupo": "provincia",
+    "objetivo": "casos_dengue",
+    "normalizacion": "interna",
+    "clase_deteccion": "aegypti"
+  }
+}

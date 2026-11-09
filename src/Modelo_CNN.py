@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import time
 import shutil
+from PIL import Image
 
 
 # Agrega la carpeta raíz del proyecto al path de Python
@@ -180,12 +181,12 @@ class Vision_Model_Procesor:
     
     
     # Para entrenaminemto
-    def classify_img_by_folder(self, test=None):
+    def classify_img_by_folder(self):
         
         assert self.train_data_folder or self.test_data_folder, "Debe de existir un directorio para entrenamiento o prueba"
         
         
-        if self.train_data_folder and test is None:
+        if self.train_data_folder:
             self.train_data = tf.keras.utils.image_dataset_from_directory(
                 self.train_data_folder,
                 labels= self.labels if self.labels else 'inferred',        # Infiere automáticamente basándose en los nombres de las carpetas
@@ -213,12 +214,36 @@ class Vision_Model_Procesor:
             )
             
             
-        print(f'Train data: {self.train_data.class_names}')
-        print(f'Validation data: {self.val_data.class_names}')
+        if self.test_data_folder:
+            self.test_data = tf.keras.utils.image_dataset_from_directory(
+                self.test_data_folder,
+                labels= self.labels if self.labels else 'inferred',        # Infiere automáticamente basándose en los nombres de las carpetas
+                label_mode= self.lab_mode if self.lab_mode else 'int',       # Como se tratan las categorias  
+                batch_size=self.batch_size,
+                image_size=(self.altura_pxl, self.ancho_pxl),
+                color_mode= self.color_mode,
+                shuffle=True, # Baraja las imagenes
+                seed=42
+            )
+            
+
         print(f'Categorias de instancia: {self.categories}')
+
+        if self.train_data:    
+            print(f'Train data: {self.train_data.class_names}')
+            print(f'Validation data: {self.val_data.class_names}')
+            
+            assert self.train_data.class_names == self.val_data.class_names == self.categories, \
+                "Las clases definidas y las de los conjuntos train y val no coinciden"
+
+            
+        if self.test_data:
+            print(f'Test data: {self.test_data.class_names}')
+            
+            assert self.test_data.class_names == self.categories, \
+                "Las clases definidas y las del conjunto test no coinciden"
         
-        assert self.train_data.class_names == self.val_data.class_names == self.categories, \
-            "Las clases entre partes no coinciden"
+
         
         return self
 
@@ -292,16 +317,16 @@ class Vision_Model_Procesor:
         
         tf_data = tf.data.Dataset.from_tensor_slices((rutas, etiquetas)) 
         
-        # Aplicar la función a todo el flujo de datos de forma paralela (Optimización por hilos)
+        # Configurar el almacenamiento en caché, mezclado aleatorio 
+        tf_data = tf_data.shuffle(buffer_size=self.buffer_size if self.buffer_size else 100)
+        
+        # Aplicar la función a todo el flujo de datos de forma paralela (Optimización por hilos) y agrupación por lotes (Batching)
         tf_data = tf_data.map(lambda ruta, etiqueta: self.procesar_img_data(ruta, 
                                                                             etiqueta, 
                                                                             one_hot_category= one_hot_category, 
                                                                             ruta_txt=ruta_txt), 
-                              num_parallel_calls=tf.data.AUTOTUNE)
+                              num_parallel_calls=tf.data.AUTOTUNE).batch(self.batch_size)
 
-        
-        # Configurar el almacenamiento en caché, mezclado aleatorio y agrupación por lotes (Batching)
-        tf_data = tf_data.shuffle(buffer_size=self.buffer_size if self.buffer_size else 1000).batch(self.batch_size)
 
         pd_dataset = pd.DataFrame({'Rutas': rutas,
                                     'Etiquetas': etiquetas})
@@ -325,9 +350,9 @@ class Vision_Model_Procesor:
         if self.train_data_folder and self.val_data_folder and test is None:
             
             if indx_train is not None and len(indx_train) > 0:
-                rutas_train = [os.path.join(self.train_data_folder, f) for f in self._tab_data_processor.data.iloc[indx_train, indx_file_name_col]]
+                rutas_train = [os.path.join(self.train_data_folder, f) for f in self._tab_data_processor.data.iloc[int(indx_train), int(indx_file_name_col)]]
                 
-                etiquetas_train = self._tab_data_processor.data.iloc[indx_train, indx_label_col]
+                etiquetas_train = self._tab_data_processor.data.iloc[int(indx_train), int(indx_label_col)]
                 
                 self.train_data = self.crear_pd_tf_df(rutas_train, etiquetas_train, one_hot_category = one_hot_category)
                 
@@ -336,9 +361,8 @@ class Vision_Model_Procesor:
                 
             
             if indx_val is not None and len(indx_val) > 0:
-                rutas_val = [os.path.join(self.val_data_folder, f) for f in self._tab_data_processor.data.iloc[indx_val, indx_file_name_col]]
-                
-                etiquetas_val = self._tab_data_processor.data.iloc[indx_val, indx_label_col]
+                rutas_val = [os.path.join(self.val_data_folder, f) for f in self._tab_data_processor.data.iloc[int(indx_val), int(indx_file_name_col)]]
+                etiquetas_val = self._tab_data_processor.data.iloc[int(indx_val), int(indx_label_col)]
                 
                 self.val_data = self.crear_pd_tf_df(rutas_val, etiquetas_val, one_hot_category = one_hot_category)
             else:
@@ -348,9 +372,9 @@ class Vision_Model_Procesor:
         
         elif self.train_data_folder and not self.val_data_folder and test is None:
             
-            rutas = [os.path.join(self.train_data_folder, f) for f in self._tab_data_processor.data.iloc[:,indx_file_name_col]]
+            rutas = [os.path.join(self.train_data_folder, f) for f in self._tab_data_processor.data.iloc[:,int(indx_file_name_col)]]
             
-            etiquetas = self._tab_data_processor.data.iloc[:,indx_label_col]
+            etiquetas = self._tab_data_processor.data.iloc[:,int(indx_label_col)]
             
             paths_train, paths_val, labels_train, labels_val = train_test_split(
                 rutas, 
@@ -368,9 +392,9 @@ class Vision_Model_Procesor:
             
         if self.test_data_folder and test:
             
-            rutas = [os.path.join(self.test_data_folder, f) for f in self._tab_data_processor.data.iloc[:,indx_file_name_col]]
+            rutas = [os.path.join(self.test_data_folder, f) for f in self._tab_data_processor.data.iloc[:,int(indx_file_name_col)]]
             
-            etiquetas = self._tab_data_processor.data.iloc[:,indx_label_col]
+            etiquetas = self._tab_data_processor.data.iloc[:,int(indx_label_col)]
             
             self.test_data = self.crear_pd_tf_df(rutas, etiquetas, one_hot_category = one_hot_category)
             
@@ -382,8 +406,9 @@ class Vision_Model_Procesor:
     
     
     def img_folder_x_text_folder(self, 
-                                 img_xten = '*.png', 
-                                 txt_xten = '*.txt',
+                                 img_xten:list = ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG'], 
+                                 txt_xten:list = ['*.txt'],
+                                 exept_xten:tuple= ('.Zone.Identifier',),
                                  one_hot_category = None, 
                                  test=None):
         
@@ -391,15 +416,36 @@ class Vision_Model_Procesor:
         
         assert self._text_tokenizer != None, "Se debe de configurar un tokenizador para procesar el texto"
         
+        
+        
         if self.train_data_folder and self.val_data_folder and test is None:
+            
+            rutas_img_train, rutas_imag_val, rutas_etiquetas_train, rutas_etiquetas_val = [], [], [], []
+            
             # Obtener y ordenar las rutas de todas las imágenes
-            rutas_img_train = sorted(str(ruta) for ruta in Path(self.train_data_folder).glob(img_xten))
-            rutas_imag_val = sorted(str(ruta) for ruta in Path(self.val_data_folder).glob(img_xten))
+            for patron_img in img_xten:
+
+                rutas_img_train.extend(str(ruta) for ruta in Path(self.train_data_folder).glob(patron_img)
+                                    if not Path(ruta).name.endswith(exept_xten))
+                
+                
+                rutas_imag_val.extend(str(ruta) for ruta in Path(self.val_data_folder).glob(patron_img)
+                                    if not Path(ruta).name.endswith(exept_xten))
 
             # Obtener y ordenar las rutas de todas las etiquetas de texto
-            rutas_etiquetas_train = sorted(str(ruta) for ruta in Path(self.train_data_folder).glob(txt_xten))
-            rutas_etiquetas_val = sorted(str(ruta) for ruta in Path(self.val_data_folder).glob(txt_xten))
+            for patron_txt in txt_xten:
+                rutas_etiquetas_train.extend(str(ruta) for ruta in Path(self.train_data_folder).glob(patron_txt)
+                                            if not Path(ruta).name.endswith(exept_xten))
+                rutas_etiquetas_val.extend(str(ruta) for ruta in Path(self.val_data_folder).glob(patron_txt)
+                                            if not Path(ruta).name.endswith(exept_xten))
+
+            rutas_img_train = sorted(set(rutas_img_train)) # Eliminar duplicados y ordena
+            rutas_imag_val = sorted(set(rutas_imag_val))  # Eliminar duplicados y ordena
             
+            
+            rutas_etiquetas_train = sorted(set(rutas_etiquetas_train))  
+            rutas_etiquetas_val = sorted(set(rutas_etiquetas_val))  
+
             # Validación de seguridad: Asegurar que cada imagen tenga su contraparte de texto
             assert len(rutas_img_train) == len(rutas_etiquetas_train), "¡La cantidad de imágenes y archivos .txt para entrenamiento no coincide!"
             assert len(rutas_imag_val) == len(rutas_etiquetas_val), "¡La cantidad de imágenes y archivos .txt para validacion no coincide!"
@@ -419,10 +465,22 @@ class Vision_Model_Procesor:
             
             
         elif self.train_data_folder and not self.val_data_folder and test is None:
-            rutas_imagenes = sorted(str(ruta) for ruta in Path(self.train_data_folder).glob(img_xten))
-
-            rutas_etiquetas = sorted(str(ruta) for ruta in Path(self.train_data_folder).glob(txt_xten))
             
+            rutas_imagenes, rutas_etiquetas = [], []
+            
+            for patron_img in img_xten:
+                rutas_imagenes.extend(str(ruta) for ruta in Path(self.train_data_folder).glob(patron_img)
+                                        if not Path(ruta).name.endswith(exept_xten))
+                rutas_imagenes = sorted(set(rutas_imagenes))  
+            
+
+            for patron_txt in txt_xten:
+                rutas_etiquetas.extend(str(ruta) for ruta in Path(self.train_data_folder).glob(patron_txt)
+                                        if not Path(ruta).name.endswith(exept_xten))
+                
+            rutas_imagenes = sorted(set(rutas_imagenes))
+            rutas_etiquetas = sorted(set(rutas_etiquetas))  
+                
             assert len(rutas_imagenes) == len(rutas_etiquetas), "¡La cantidad de imágenes y archivos .txt no coincide!"
             
             
@@ -446,9 +504,22 @@ class Vision_Model_Procesor:
         
         
         if self.test_data_folder and test :
-            rutas_imagenes = sorted(str(ruta) for ruta in Path(self.test_data_folder).glob(img_xten))
+            
+            rutas_imagenes, rutas_etiquetas = [], []
+            
+            
+            for patron_img in img_xten:
+                rutas_imagenes.extend(str(ruta) for ruta in Path(self.test_data_folder).glob(patron_img)
+                                        if not Path(ruta).name.endswith(exept_xten))  # Ignorar archivos mencionados en exept_xten
 
-            rutas_etiquetas = sorted(str(ruta) for ruta in Path(self.test_data_folder).glob(txt_xten))
+                 
+
+            for patron_txt in txt_xten:
+                rutas_etiquetas.extend(str(ruta) for ruta in Path(self.test_data_folder).glob(patron_txt)
+                                        if not Path(ruta).name.endswith(exept_xten))
+                
+            rutas_imagenes = sorted(set(rutas_imagenes))
+            rutas_etiquetas = sorted(set(rutas_etiquetas)) 
             
             assert len(rutas_imagenes) == len(rutas_etiquetas), "¡La cantidad de imágenes y archivos .txt no coincide!"
             
@@ -487,20 +558,24 @@ class Vision_Model_Procesor:
         
         print("Clases detectadas:", self.categories)
 
-        plt.figure(figsize=(10, 10))
-
+        plt.figure(figsize=(10, 10))       
+        
         # Se extrae un lote para graficar las primeras 9 imágenes de este
         for lote_imagenes, lote_etiquetas in tf_dataset.take(num_lote):
-            for i in range(9):
+            
+            cantidad = int(lote_imagenes.shape[0])
+            indices = random.sample(range(cantidad), k=min(9, cantidad))
+            
+            for i, indice in enumerate(indices):
                 ax = plt.subplot(3, 3, i + 1)
                 img_rdm_indx = random.randint(0, self.batch_size - 1)
                 
                 # Keras lee las imágenes como float32 o int32. 
                 # Las convertimos a enteros de 8 bits (uint8) para que matplotlib las renderice correctamente
-                plt.imshow(lote_imagenes[img_rdm_indx].numpy().astype("uint8"))
+                plt.imshow(lote_imagenes[indice].numpy().astype("uint8"))
                 
                 # Se busca el nombre de texto de la clase usando el índice numérico
-                id_clase = lote_etiquetas[img_rdm_indx].numpy()
+                id_clase = int(lote_etiquetas[indice].numpy())
                 plt.title(self.categories[id_clase])
                 plt.axis("off")
                 
@@ -511,13 +586,15 @@ class Vision_Model_Procesor:
     
     def set_df_img(self, 
                       path:str, 
-                      xten:str, 
+                      patron:list = ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG'], 
+                      exept_patron:tuple= ('.Zone.Identifier',),
                       subcarpetas:list = None, 
                       just_paths:bool = False):
 
         path = Path(path)
-        columnas = ["Ruta_Imagen","Alto", "Ancho", "Canal"]
+        columnas = ["Ruta_Imagen","Alto", "Ancho", "Canal", "Modo"]
         dict_df = {}
+        
         
         
         if not subcarpetas:
@@ -529,9 +606,15 @@ class Vision_Model_Procesor:
         if just_paths:
             
             for carpeta in subcarpetas:
-                ruta = path.joinpath(carpeta)
-                rutas = sorted(str(archivo) for archivo in ruta.glob(xten))
-                dict_df[carpeta] = rutas
+                rutas = []
+                
+                for xten in patron:
+                    ruta = path.joinpath(carpeta)
+                    rutas.extend(str(archivo) for archivo in ruta.glob(xten)
+                                        if archivo.is_file() 
+                                        and not archivo.name.endswith(exept_patron))
+                    
+                    dict_df[carpeta] = sorted(set(rutas))
                 
             tab_procesor = TabularDataProcessor()
             tab_procesor.data = pd.DataFrame.from_dict(dict_df, orient='index').T
@@ -544,11 +627,17 @@ class Vision_Model_Procesor:
    
         for carpeta in subcarpetas:
             
+            rutas = []
+            
             tab_procesor = TabularDataProcessor()
             
-            ruta = path.joinpath(carpeta)
-            rutas = sorted(str(archivo) for archivo in ruta.glob(xten))
-            
+            for xten in patron:
+                ruta = path.joinpath(carpeta)
+                rutas.extend(str(archivo) for archivo in ruta.glob(xten)
+                                    if archivo.is_file() and not archivo.name.endswith(exept_patron))
+
+                rutas = sorted(set(rutas))
+                
             print(f'Cantidad de archivos en {carpeta}: {len(rutas)}')
             
 
@@ -556,18 +645,19 @@ class Vision_Model_Procesor:
             
             for ruta_imagen in rutas:
                 
-                img = self._cargar_imagen(ruta_imagen, resize = False)
-                
-                alto, ancho, canal = img.shape
-                
-                nueva_fila = {
+                with Image.open(ruta_imagen) as img:
+                    ancho, alto = img.size  # Pillow devuelve ancho primero
+                    canales = len(img.getbands())
+                    modo = img.mode
+                    
+                    
+                filas_acumuladas.append({
                     "Ruta_Imagen" : ruta_imagen,
                     "Alto": alto,
                     "Ancho": ancho,
-                    "Canal": canal
-                }
-                
-                filas_acumuladas.append(nueva_fila)
+                    "Canal": canales,
+                    "Modo": modo
+                })
                 
                 df = pd.DataFrame(filas_acumuladas, columns=columnas)
                 
@@ -578,6 +668,7 @@ class Vision_Model_Procesor:
         self.df_img = dict_df
          
         return self
+
 
     def move_files_in_img_paths(self, dest_folder:str, col_paths:str, col_labels:str):
         

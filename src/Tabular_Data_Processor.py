@@ -6,7 +6,8 @@ sys.path.append(os.path.abspath(os.path.join('..')))
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-
+from sklearn.experimental import enable_iterative_imputer  
+from sklearn.impute import IterativeImputer
 
 from src.Tabular_Data_Loader import TabularDataLoader
 from src.Graficos import Graficos
@@ -23,6 +24,8 @@ class TabularDataProcessor(TabularDataLoader):
         
         #Busqueda de datos
         self._searched_data = None
+        
+        self._imputed_data = None
         
         #Componentes
         self.graficos = Graficos()
@@ -64,6 +67,9 @@ class TabularDataProcessor(TabularDataLoader):
     def searched_data(self):
         return self._searched_data
     
+    @property
+    def imputed_data(self):
+        return self._imputed_data
 
     
     
@@ -167,7 +173,6 @@ class TabularDataProcessor(TabularDataLoader):
             dummies_columns = [col for col in dummies.columns if col != f"{prefijo}_{categoria}"]
             
         dummies = dummies[dummies_columns].copy()
-        print(dummies.columns)
         
         idx = self._data.columns.get_loc(columna)
         
@@ -197,3 +202,59 @@ class TabularDataProcessor(TabularDataLoader):
                     d.update({DF.columns.values[i] : "datos incosistentes"}) 
                     break
         return d, f, c
+    
+    
+    def mice_imputation(self, data = None, col_imputar:list = None, row_filter:list = None, iter:int = 10, seed:int = 42):
+        
+        imputador_mice = IterativeImputer(max_iter=iter, random_state=seed)
+        
+        data = data if data is not None else self._data
+        
+        columnas = col_imputar if col_imputar else list(data.columns)
+        
+        row_index = row_filter if row_filter else list(data.index)
+        
+        datos_mice = imputador_mice.fit_transform(data.loc[row_index, col_imputar])
+        
+        self._imputed_data = pd.DataFrame(datos_mice, 
+                                          columns=columnas,
+                                          index = data.loc[row_index, col_imputar].index)
+        
+        data.loc[row_index, col_imputar] = self._imputed_data
+        
+        self._imputed_data = data
+        
+        return self
+
+    
+    def crear_lags(self, ventana_temp:int, data = None, col = None):
+
+        data = data if data is not None else self._data
+
+        assert col is not None, 'Falta el nombre de la columna'
+        
+        if ventana_temp <= 0:
+            self._data = data
+            return self
+        
+        data[f'{col}_lag{ventana_temp}'] = data[col].shift(ventana_temp)
+        
+        self._data = data
+        
+        return self.crear_lags(ventana_temp-1, data, col)
+    
+    
+    
+    def lags_x_col(self, ventana_temp:int = 6, data:'pd.DataFrame' = None, columnas:list=None):
+        
+        data = data if data is not None else self._data
+        
+        columnas = columnas if columnas is not None else list(data.columns)
+        
+        for col in columnas:
+            self.crear_lags(ventana_temp, data, col)
+            print(f'{ventana_temp} lags de {col} creados')
+            
+        return self
+            
+            

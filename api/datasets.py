@@ -1,106 +1,134 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Preparación explícita de datasets, sin modificar archivos originales."""
-import json
+"""Preparación con TabularDataProcessor y asociaciones con Dython."""
 import numpy as np
 import pandas as pd
-
-from api.schemas import COLUMNAS
-from api.predict import ErrorPrediccion, validar_tabla
-from src.Data_Processor import DataProcessor
+from src.Tabular_Data_Processor import TabularDataProcessor
+from api.loaders import tabla, serializar
 
 
-def vista_previa(frame, fuente):
-    if frame.empty or len(frame) > 10000 or len(frame.columns) > 200:
-        raise ErrorPrediccion("Se admiten 1–10.000 filas y hasta 200 columnas de origen.")
-    if frame.columns.duplicated().any() or any(not isinstance(c, str) or not c.strip() for c in frame.columns):
-        raise ErrorPrediccion("Los encabezados deben ser textos únicos y no vacíos.")
-    return {"fuente": fuente, "columnas": list(frame.columns),
-            "filas": json.loads(frame.to_json(orient="records", date_format="iso"))}
+def procesador(filas):
+    processor = TabularDataProcessor()
+    processor.data = pd.DataFrame(filas).copy()
+    if processor.data.columns.duplicated().any():
+        raise ValueError('No se permiten columnas duplicadas.')
+    return processor
 
 
-def clave(value):
-    if isinstance(value, (float, int)) and float(value).is_integer():
-        return str(int(value))
-    return str(value).strip()
+def convertir_dummies(processor, columnas):
+    correspondence = []
+    for column in columnas:
+        if processor.data[column].isna().any():
+            raise ValueError(f'{column}: elimina o completa los nulos antes de crear dummies.')
+        # El método de src omite la última categoría observada. No lo reimplementamos.
+        categories = list(processor.data[column].unique())
+        before = set(processor.data.columns)
+        processor.get_dummies(column, prefijo=column)
+        created = [c for c in processor.data.columns if c not in before]
+        correspondence.append({'variable': column, 'columnas': created, 'referencia': str(categories[-1])})
+    return correspondence
 
 
-def convertir(series, mapping, nombre):
-    if mapping:
-        keys = series.map(clave)
-        if not keys.isin(mapping).all():
-            raise ErrorPrediccion(f"El mapa de {nombre} no cubre todos sus valores. Revisa la vista previa.")
-        series = keys.map(mapping)
-    try:
-        return pd.to_numeric(series, errors="raise")
-    except (ValueError, TypeError) as exc:
-        raise ErrorPrediccion(f"{nombre} contiene texto: configura su mapa de valores.") from exc
-
-
-def matriz_entrada(frame, predictor, aplicar_scaler):
-    if set(frame.columns) != set(COLUMNAS) or frame.columns.duplicated().any():
-        raise ErrorPrediccion("Se requieren exactamente las 20 variables, sin objetivo ni identificadores.")
-    processor = DataProcessor()
-    processor.data = frame[COLUMNAS].copy()
-    try:
-        processor.set_types({c: "float64" for c in COLUMNAS})
-    except (ValueError, TypeError) as exc:
-        raise ErrorPrediccion("Todas las entradas deben ser numéricas.") from exc
-    processor.scaler = predictor.scaler
-    if aplicar_scaler:
-        clients = validar_tabla(processor.data)
-        scaled = predictor.transformar(clients)
-        return processor.data, scaled
-    scaled = processor.data.to_numpy(dtype=float)
-    low, high = processor.scaler.feature_range
-    if not np.isfinite(scaled).all() or (scaled < low - 1e-6).any() or (scaled > high + 1e-6).any():
-        raise ErrorPrediccion("Sin aplicar scaler se requieren entradas ya escaladas dentro de su rango.")
-    raw = pd.DataFrame(processor.scaler.inverse_transform(scaled), columns=COLUMNAS)
-    # Solo redondeo del error numérico de inversión, nunca una categoría arbitraria.
-    for c in set(COLUMNAS) - {"Antiguedad(Meses)", "Cargos_Mensuales"}:
-        rounded = raw[c].round()
-        if not np.allclose(raw[c], rounded, atol=1e-5, rtol=0):
-            raise ErrorPrediccion(f"{c} no corresponde a una categoría válida con este scaler.")
-        raw[c] = rounded
-    validar_tabla(raw)
-    values = raw.to_numpy()
-    if (values < predictor.scaler.data_min_ - 1e-5).any() or (values > predictor.scaler.data_max_ + 1e-5).any():
-        raise ErrorPrediccion("Los datos escalados no corresponden al rango de entrenamiento.")
-    return raw, scaled.astype("float32")  # No transform: ya estaba escalado.
-
-
-def preparar(request, predictor):
-    frame = pd.DataFrame(request.filas)
-    vista_previa(frame, request.fuente)
-    if set(request.entradas) != set(COLUMNAS):
-        raise ErrorPrediccion("Mapea cada una de las 20 variables de entrada.")
-    if set(request.valores) - set(COLUMNAS):
-        raise ErrorPrediccion("Hay mapas de valores para variables no admitidas.")
-    if set(request.eliminar_columnas) - set(frame.columns):
-        raise ErrorPrediccion("Se intenta eliminar una columna inexistente.")
-    if any(i > len(frame) for i in request.eliminar_filas):
-        raise ErrorPrediccion("Hay posiciones de fila fuera del archivo.")
-    frame.index = np.arange(1, len(frame) + 1)
-    frame = frame.drop(columns=request.eliminar_columnas, index=list(set(request.eliminar_filas)))
-    used = set(request.entradas.values()) | ({request.objetivo} if request.objetivo else set())
-    if used - set(frame.columns):
-        raise ErrorPrediccion("Alguna columna mapeada falta o fue eliminada.")
-    if request.objetivo and request.objetivo in request.entradas.values():
-        raise ErrorPrediccion("La columna objetivo no puede usarse como entrada del modelo.")
+def preparar(request):
+    processor = procesador(request.filas)
+    before = len(processor.data)
+    if request.renombrar:
+        names = [request.renombrar.get(c, c) for c in processor.data.columns]
+        if len(names) != len(set(names)) or any(not c.strip() for c in names):
+            raise ValueError('El mapeo produce nombres vacíos o repetidos.')
+        processor.col_names = request.renombrar
     if request.eliminar_nulos:
-        frame = frame.replace(r"^\s*$", np.nan, regex=True).dropna(subset=list(used))
-    if frame.empty:
-        raise ErrorPrediccion("La preparación eliminó todas las filas.")
-    mapped = pd.DataFrame({c: convertir(frame[source], request.valores.get(c, {}), c)
-                           for c, source in request.entradas.items()}, index=frame.index)[COLUMNAS]
-    raw, _ = matriz_entrada(mapped, predictor, request.aplicar_scaler)
-    if request.objetivo:
-        labels = convertir(frame[request.objetivo], request.valores_objetivo, "Abandono")
-        if labels.isna().any() or not labels.isin([0, 1]).all():
-            raise ErrorPrediccion("Mapea la columna objetivo a 0 (permanece) y 1 (abandona).")
-        raw["Abandono"] = labels.to_numpy(dtype=int)
-    return {"fuente": request.fuente, "columnas": list(raw.columns), "filas": raw.to_dict("records"),
-            "datos_exportacion": vista_previa(frame, request.fuente),
-            "entrada": mapped.to_dict("records"), "aplicar_scaler": request.aplicar_scaler,
-            "revision_preparacion": predictor.revision, "filas_origen": frame.index.tolist(),
-            "eliminadas": len(request.filas) - len(frame),
-            "columnas_omitidas": [c for c in frame.columns if c not in used]}
+        processor.data = processor.data.replace(r'^\s*$', np.nan, regex=True).dropna().copy()
+    if processor.data.empty:
+        raise ValueError('La preparación dejó el dataset sin filas.')
+    if request.tipos:
+        processor.set_types(request.tipos)
+    for column, mapping in request.mapas.items():
+        processor.set_types({column: 'string'})
+        if processor.data[column].isna().any() or not set(processor.data[column]).issubset(mapping):
+            raise ValueError(f'El mapa de {column} no cubre todos sus valores.')
+        processor.replace_to_numeric_bool([column], map=mapping)
+    dummies = convertir_dummies(processor, request.dummies)
+    processor.set_info()
+    return tabla(processor.data, dummies=dummies, excluidas=before - len(processor.data))
+
+
+def generar_correlaciones(request):
+    frame = pd.DataFrame(request.filas)
+    columns = list(dict.fromkeys(request.columnas))
+    if len(columns) < 2 or not set(columns).issubset(frame.columns):
+        raise ValueError('Selecciona al menos dos columnas existentes.')
+    categorical = [c for c in request.categoricas if c in columns]
+    if request.modalidad == 'numericas':
+        columns = [c for c in columns if c not in categorical]
+        categorical = []
+        if len(columns) < 2:
+            raise ValueError('El análisis numérico necesita al menos dos variables numéricas.')
+    original = frame[columns].replace(r'^\s*$', np.nan, regex=True)
+    frame = original.dropna().copy()
+    if len(frame) < 2:
+        raise ValueError('Se necesitan al menos dos filas completas.')
+    numerical = [c for c in columns if c not in categorical]
+    frame[numerical] = frame[numerical].apply(pd.to_numeric, errors='raise')
+    if not np.isfinite(frame[numerical].to_numpy(dtype=float)).all():
+        raise ValueError('Hay valores numéricos infinitos.')
+    dummy_info = []
+    if request.modalidad == 'dummies':
+        processor = procesador(serializar(frame))
+        dummy_info = convertir_dummies(processor, categorical)
+        frame = processor.data
+    elif request.modalidad == 'numericas':
+        frame = frame[numerical]
+    constants = [c for c in frame if frame[c].nunique() < 2]
+    usable = [c for c in frame if c not in constants]
+    matrix = pd.DataFrame(np.nan, index=frame.columns, columns=frame.columns)
+    if len(usable) >= 1:
+        if request.modalidad == 'mixtas':
+            from dython.nominal import associations
+            computed = associations(frame[usable], nominal_columns=[c for c in categorical if c in usable],
+                                    num_num_assoc=request.metodo, nom_nom_assoc='cramer',
+                                    cramers_v_bias_correction=True, compute_only=True,
+                                    nan_strategy='drop_samples')['corr']
+        else:
+            computed = frame[usable].corr(method=request.metodo)
+        matrix.loc[usable, usable] = computed
+    cells = []
+    for a in matrix.index:
+        for b in matrix.columns:
+            method = request.metodo
+            if request.modalidad == 'mixtas':
+                if a in categorical and b in categorical:
+                    method = 'V de Cramér'
+                elif (a in categorical) != (b in categorical):
+                    method = 'Eta (η)'
+            cells.append({'variable_1': a, 'variable_2': b, 'valor': matrix.loc[a, b], 'metodo': method})
+    return serializar({'celdas': cells, 'columnas': list(matrix.columns), 'constantes': constants,
+                      'filas_utilizadas': len(frame), 'filas_excluidas': len(original) - len(frame), 'dummies': dummy_info})
+
+
+def matriz(frame, config, scaler=None):
+    if not config.columnas or not set(config.columnas).issubset(frame.columns):
+        raise ValueError(f'Faltan entradas requeridas: {", ".join(c for c in config.columnas if c not in frame.columns)}')
+    values = frame[config.columnas].apply(pd.to_numeric, errors='raise')
+    if not np.isfinite(values.to_numpy()).all():
+        raise ValueError('Las entradas contienen nulos o valores infinitos.')
+    if scaler is not None:
+        values = scaler.transform(values)
+    return np.asarray(values, dtype=np.float32)
+
+
+def ventana(historial, registro, config, scaler=None):
+    frame = pd.DataFrame(historial)
+    if frame.empty or config.fecha not in frame or config.fecha not in registro:
+        raise ValueError('Se requiere historial y fecha de referencia.')
+    reference = pd.Timestamp(registro[config.fecha])
+    frame[config.fecha] = pd.to_datetime(frame[config.fecha], errors='raise')
+    if config.grupo:
+        if config.grupo not in frame or config.grupo not in registro:
+            raise ValueError(f'Falta el grupo temporal: {config.grupo}')
+        frame = frame.loc[frame[config.grupo].astype(str) == str(registro[config.grupo])]
+    frame = frame.loc[frame[config.fecha] <= reference].sort_values(config.fecha).tail(config.ventana)
+    if len(frame) != config.ventana or frame[config.fecha].iloc[-1] != reference:
+        raise ValueError(f'Se requieren {config.ventana} semanas hasta la fecha seleccionada.')
+    if not frame[config.fecha].diff().dropna().eq(pd.Timedelta(days=7)).all():
+        raise ValueError('El historial debe tener semanas consecutivas, sin duplicados.')
+    return matriz(frame, config, scaler)[None, :, :], reference

@@ -1,55 +1,81 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
 import pandas as pd
 import streamlit as st
-
 from app.client import ErrorAPI
-from app.results import graficos_modelos, matriz_interactiva, archivo_metricas
-from app.ui import asegurar_navegacion, api_activa, cabecera, desde_respuesta, dataset_activo, plantilla
+from app.datasets import selector_dataset, cargar_imagenes, filas, mapear_entradas
+from app.results import mostrar_evaluacion
+from app.ui import cabecera, api_activa
 
-asegurar_navegacion("pages/3_Metricas.py")
-cabecera("metricas", "03 / EVIDENCIA DEL MODELO", "El rendimiento necesita contexto.",
-         "Evalúa la clasificación del modelo 1 y las probabilidades del modelo 2 con las medidas utilizadas en las clases del proyecto.")
-predictor = api_activa()
-st.download_button("Descargar plantilla de cliente individual", plantilla(), "plantilla_cliente.csv", "text/csv", on_click="ignore")
-options = {"proyecto": "Ejemplos reservados del notebook", "subido": "Dataset nuevo cargado en Lotes"}
-default = st.session_state.get("metricas_origen_activo", st.session_state.get("origen_datos_activo", "proyecto"))
-source = st.radio("Conjunto de evaluación", list(options), index=list(options).index(default),
-                  format_func=options.get, key="_metricas_origen", horizontal=True)
-st.session_state["metricas_origen_activo"] = source
-try:
-    payload = dataset_activo(predictor, "evaluacion", origen=source)
-    frame, clients = desde_respuesta(payload)
-except ErrorAPI as exc:
-    st.error(str(exc))
-    st.stop()
-name = payload["fuente"]
-if source == "proyecto":
-    st.warning("El entrenamiento actual utiliza X_test como validación. Sus resultados no constituyen una evaluación final independiente. El subconjunto de 23 ejemplos sirve para demostración.")
-    name += " · demostración, no prueba final"
-st.caption(f"{name} · {len(frame)} registros · umbral {predictor.config.umbral:.2%}")
-if st.button("Calcular métricas", type="primary"):
-    try:
-        with st.spinner("Calculando métricas en la API…"):
-            result = (predictor.dataset_request(payload, evaluar=True) if "entrada" in payload
-                      else predictor.evaluar(clients, frame.Abandono.astype(int).tolist(), name))
-        summary = pd.DataFrame(result["metricas"])
-        summary["Umbral"] = summary["Umbral"].map(lambda value: f"{value:.2%}")
-        st.dataframe(summary, hide_index=True, width="stretch")
-        st.caption("MAE y RMSE: clase 0/1 para el modelo 1; probabilidad para el modelo 2, comparada con la etiqueta observada. MAE/media y MAE/mediana son razones; si el denominador es cero se muestran vacías. No son porcentajes de accuracy.")
-        for col, slot in zip(st.columns(2), ("modelo_1", "modelo_2")):
-            with col:
-                st.subheader("Modelo 1 · clasificación" if slot == "modelo_1" else "Modelo 2 · clasificación auxiliar")
-                if slot == "modelo_2":
-                    st.caption(f"Solo para reporte y matriz: probabilidad ≥ {predictor.config.umbral:.2%}. La salida principal sigue siendo la probabilidad.")
-                matriz_interactiva(result["matrices"][slot])
-                report = {key: value for key, value in result["reportes"][slot].items() if isinstance(value, dict)}
-                st.dataframe(pd.DataFrame(report).T, width="stretch")
-        rows = result["clientes"]
-        for row, position in zip(rows, payload.get("filas_origen", range(1, len(rows) + 1))):
-            row["fila"] = position
-        graficos_modelos(rows)
-        st.caption("Las métricas de clasificación usan el umbral activo. Precision, recall y F1 sin denominador se muestran como 0; ROC AUC y average precision requieren ambas clases.")
-        st.download_button("Descargar resultados de evaluación", archivo_metricas(result),
-                           "resultados_metricas.zip", "application/zip", on_click="ignore")
-    except ErrorAPI as exc:
-        st.error(str(exc))
+cabecera('evaluacion', '05', 'Resultados con contexto.', 'Importa métricas de tus notebooks o evalúa con etiquetas reales. Inicio utiliza la evaluación seleccionada de cada modelo.')
+api = api_activa()
+state = api.request('GET', '/configuracion')
+slot = st.selectbox('Modelo', ['cnn', 'rnn', 'ann'], format_func=str.upper)
+cfg = state['configuracion'][slot]
+if slot not in state['identidades']:
+    st.info('Este modelo está pendiente. Configura su artefacto antes de importar o calcular métricas.')
+import_tab, calculate_tab, saved_tab = st.tabs(['Importar CSV', 'Calcular evaluación', 'Resultados guardados'])
+with import_tab:
+    st.caption('Columnas requeridas: modelo (cnn/rnn/ann), conjunto, metrica, valor. Los valores se asocian a los artefactos activos.')
+    uploaded = st.file_uploader('CSV de métricas', type=['csv'], max_upload_size=20, key='csv_metricas')
+    if st.button('Importar métricas', type='primary', disabled=uploaded is None):
+        try:
+            dataset = api.subir(uploaded)
+            api.request('POST', '/evaluaciones/importar', {'filas': dataset['filas'], 'revision': state['revision']})
+            st.success('Métricas importadas y seleccionadas para el resumen de Inicio.')
+        except ErrorAPI as exc:
+            st.error(str(exc))
+with calculate_tab:
+    name, frame = selector_dataset(api, 'evaluar_' + slot, 'Conjunto etiquetado')
+    conjunto = st.text_input('Nombre del conjunto de evaluación', value=name or '', key='conjunto_' + slot)
+    objective = 'recomendacion'
+    images = []
+    image_column = 'imagen'
+    history = None
+    if frame is not None:
+        if slot in ('cnn', 'ann'):
+            expected = 'especie' if slot == 'cnn' else 'recomendacion'
+            objective = st.selectbox('Columna de etiqueta real', list(frame.columns), index=list(frame.columns).index(expected) if expected in frame else None, key='etiqueta_' + slot)
+        if slot == 'cnn':
+            image_column = st.selectbox('Columna de nombre de imagen', list(frame.columns), index=list(frame.columns).index('imagen') if 'imagen' in frame else None, key='eval_img')
+            images = st.file_uploader('Imágenes etiquetadas', type=['jpg', 'jpeg', 'png'], accept_multiple_files=True, max_upload_size=20, key='imagenes_eval')
+        elif slot == 'ann':
+            frame = mapear_entradas(frame, cfg['columnas'], 'eval_ann')
+        else:
+            st.caption('El historial debe incluir las semanas reales del horizonte evaluado. Las entradas del modelo solo usan fechas anteriores o iguales a la referencia.')
+            _, history = selector_dataset(api, 'eval_historial', 'Historial y valores reales')
+            fields = cfg['columnas'] + [cfg['fecha'], cfg['objetivo']] + ([cfg['grupo']] if cfg['grupo'] else [])
+            if history is not None:
+                history = mapear_entradas(history, fields, 'eval_hist')
+            frame = mapear_entradas(frame, [cfg['fecha']] + ([cfg['grupo']] if cfg['grupo'] else []), 'eval_ref')
+            if frame is not None:
+                options = list(range(len(frame)))
+                positions = st.multiselect('Observaciones de referencia que se evaluarán', options,
+                                          format_func=lambda i: f"Fila {i + 1} · {frame.iloc[i][cfg['fecha']]}" + (f" · {frame.iloc[i][cfg['grupo']]}" if cfg['grupo'] else ''))
+                frame = frame.iloc[positions]
+        if st.button('Calcular métricas', type='primary', disabled=slot not in state['identidades'] or frame is None or frame.empty or not conjunto.strip()):
+            try:
+                if slot in ('cnn', 'ann') and objective is None:
+                    raise ValueError('Selecciona la etiqueta real.')
+                if slot == 'cnn' and image_column is None:
+                    raise ValueError('Selecciona la columna de imagen.')
+                with st.spinner('Evaluando datos etiquetados…'):
+                    api.request('POST', '/evaluate', {'modelo': slot, 'conjunto': conjunto, 'objetivo': objective or '',
+                                'registros': filas(frame), 'imagenes': cargar_imagenes(images), 'columna_imagen': image_column or 'imagen',
+                                'historial': filas(history) if history is not None else [], 'revision': state['revision']}, timeout=300)
+                st.success('Evaluación calculada y seleccionada para Inicio.')
+            except (ErrorAPI, ValueError) as exc:
+                st.error(str(exc))
+with saved_tab:
+    saved = api.request('GET', '/evaluaciones')
+    identity = state['identidades'].get(slot)
+    results = [r for r in saved['resultados'] if r['modelo'] == slot and r['identidad'] == identity]
+    if not results:
+        st.info('Sin evaluación cargada para el artefacto activo.')
+    else:
+        selected_id = saved['seleccion'].get(slot)
+        default = next((i for i, r in enumerate(results) if r['id'] == selected_id), len(results) - 1)
+        selected = st.selectbox('Evaluación', results, index=default, format_func=lambda r: f"{r['conjunto']} · {r['origen']} · {r['fecha'][:19]}")
+        if st.button('Mostrar esta evaluación en Inicio'):
+            api.request('POST', '/evaluaciones/seleccionar', {'modelo': slot, 'id': selected['id']})
+            st.success('Resumen de Inicio actualizado.')
+        mostrar_evaluacion(selected)

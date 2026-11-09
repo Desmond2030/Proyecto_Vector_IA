@@ -1,111 +1,120 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Único formulario de carga y preparación de datasets de clientes."""
-import hashlib
+"""Estado de sesión y controles; las transformaciones se delegan a src a través de la API."""
+import base64
 import json
 import pandas as pd
 import streamlit as st
-
-from api.schemas import COLUMNAS
 from app.client import ErrorAPI
 
 
-def filas_a_eliminar(texto, total):
-    rows = set()
-    for piece in texto.split(","):
-        piece = piece.strip()
-        if not piece:
-            continue
-        limits = piece.split("-")
-        if len(limits) > 2:
-            raise ValueError("Usa posiciones como 1, 4-8, 12.")
-        start, end = int(limits[0]), int(limits[-1])
-        if not 1 <= start <= end <= total:
-            raise ValueError(f"Las posiciones deben estar entre 1 y {total}.")
-        rows.update(range(start, end + 1))
-    return sorted(rows)
+def filas(frame):
+    return json.loads(frame.to_json(orient='records', date_format='iso'))
 
 
-def mapa_json(texto):
-    value = json.loads((texto or "").strip() or "{}")
-    if not isinstance(value, dict):
-        raise ValueError("Cada mapa de valores debe ser un objeto JSON, por ejemplo {\"Yes\": 1, \"No\": 0}.")
-    return value
+def registrar_dataset(payload):
+    frame = pd.DataFrame(payload['filas'], columns=payload['columnas'])
+    if '_fila_origen' not in frame:
+        frame.insert(0, '_fila_origen', range(1, len(frame) + 1))
+    st.session_state.setdefault('datasets', {})[payload['fuente']] = frame
+    st.session_state['dataset_activo'] = payload['fuente']
 
 
-def editor_dataset(api):
-    st.subheader("Cargar y preparar dataset")
-    st.write("Sube aquí los datos para métricas, lotes y exploración. Se admiten otras columnas y nombres; después se construyen las 20 entradas del modelo.")
-    file = st.file_uploader("Dataset de clientes", type=["csv", "xlsx", "parquet"], max_upload_size=20, key="dataset_archivo")
-    if file is not None:
-        digest = hashlib.sha256(file.getvalue() + file.name.encode()).hexdigest()
-        if st.session_state.get("dataset_borrador_hash") != digest:
-            try:
-                preview = api.subir(file, "datos", "preparacion")
-            except ErrorAPI as exc:
-                st.error(str(exc))
-                return
-            st.session_state["dataset_borrador"] = preview
-            st.session_state["dataset_borrador_hash"] = digest
-    if "dataset_borrador" not in st.session_state:
-        return
-    digest = st.session_state["dataset_borrador_hash"]
-    previous = st.session_state.get("dataset_receta", {}) if st.session_state.get("dataset_receta_hash") == digest else {}
-    preview = st.session_state["dataset_borrador"]
-    frame = pd.DataFrame(preview["filas"], columns=preview["columnas"])
-    frame.index = range(1, len(frame) + 1)
-    st.caption(f"Archivo de origen: {len(frame)} filas · {len(frame.columns)} columnas. Numeración desde 1, sin contar el encabezado.")
-    st.dataframe(frame.head(100), width="stretch", height=280)
-    st.caption("Vista previa: primeras 100 filas. La preparación se aplica a todas las filas del archivo.")
-    drop = st.multiselect("Eliminar columnas", list(frame.columns), default=previous.get("eliminar_columnas", []), key=f"drop_{digest}")
-    available = [c for c in frame.columns if c not in drop]
-    if not available:
-        st.warning("Conserva al menos las columnas que deseas mapear.")
-        return
-    editor_key = digest + hashlib.sha256(str(drop).encode()).hexdigest()[:8]
-    with st.form(f"preparacion_{editor_key}"):
-        source_name = st.text_input("Nombre y procedencia del dataset", value=previous.get("fuente", preview["fuente"]), max_chars=200)
-        rows_text = st.text_input("Eliminar filas por posición", value=", ".join(map(str, previous.get("eliminar_filas", []))), placeholder="Ejemplo: 1, 4-8, 12")
-        remove_nulls = st.checkbox("Eliminar filas con nulos o espacios vacíos en las columnas utilizadas", value=previous.get("eliminar_nulos", False))
-        st.markdown("**Mapear columnas de entrada**")
-        st.caption("Cada fila es una entrada del modelo. Elige la columna de origen; las no mapeadas quedan fuera. Puedes usar una misma columna con distintos mapas para crear las dummies de internet o pago.")
-        mapping = pd.DataFrame({"Entrada del modelo": COLUMNAS,
-                                "Columna de origen": [previous.get("entradas", {}).get(c, c if c in available else None) for c in COLUMNAS],
-                                "Mapa de valores (JSON)": [json.dumps(previous.get("valores", {}).get(c, {}), ensure_ascii=False) for c in COLUMNAS]})
-        edited = st.data_editor(mapping, hide_index=True, width="stretch", height=530,
-            disabled=["Entrada del modelo"], num_rows="fixed", key=f"map_{editor_key}",
-            column_config={"Columna de origen": st.column_config.SelectboxColumn(options=available, required=True),
-                           "Mapa de valores (JSON)": st.column_config.TextColumn(width="large")})
-        st.caption('Mapas opcionales: {"Yes": 1, "No": 0}; Contrato: {"Month-to-month": 0, "One year": 1, "Two year": 2}. Para DSL: {"DSL": 1, "Fiber optic": 0, "No": 0}. Sin mapa, se exige un número.')
-        target_default = previous.get("objetivo", "Abandono" if "Abandono" in available else None)
-        target = st.selectbox("Columna objetivo", [None] + available,
-                             index=([None] + available).index(target_default) if target_default in available else 0,
-                             format_func=lambda x: "Sin objetivo (lotes y exploración)" if x is None else x)
-        target_map = st.text_input("Mapa de valores del objetivo (JSON)", value=json.dumps(previous.get("valores_objetivo", {}), ensure_ascii=False),
-                                   help='Ejemplo: {"Yes": 1, "No": 0}. Si ya contiene 0/1, deja {}.')
-        apply_scaler = st.checkbox("Aplicar scaler antes de predecir", value=previous.get("aplicar_scaler", True))
-        st.caption("Activado: entradas sin escalar. Desactivado: el archivo YA está escalado con el scaler activo; se validará y no se escalará otra vez. Para explorar se reconstruyen las unidades originales.")
-        submitted = st.form_submit_button("Validar y guardar dataset preparado", type="primary")
-    if submitted:
+def selector_dataset(api, key='datos', label='Dataset', cargar=True):
+    library = st.session_state.setdefault('datasets', {})
+    if cargar:
+        with st.expander('Abrir datos del proyecto o subir un archivo', expanded=not library):
+            left, right = st.columns(2)
+            with left:
+                try:
+                    names = api.request('GET', '/datos')
+                    selected = st.selectbox('Archivo del proyecto', names, index=None, key=key + '_local')
+                    if st.button('Abrir archivo', key=key + '_abrir', disabled=not selected):
+                        registrar_dataset(api.request('GET', '/datos', params={'nombre': selected}))
+                        st.rerun()
+                except ErrorAPI as exc:
+                    st.error(str(exc))
+            with right:
+                upload = st.file_uploader('CSV, Excel o Parquet', type=['csv', 'xlsx', 'parquet'], max_upload_size=20, key=key + '_upload')
+                if st.button('Cargar archivo', key=key + '_cargar', disabled=upload is None):
+                    try:
+                        registrar_dataset(api.subir(upload))
+                        st.rerun()
+                    except ErrorAPI as exc:
+                        st.error(str(exc))
+    if not library:
+        st.info('Abre un dataset para continuar. No necesitas modelos para explorarlo.')
+        return None, None
+    names = list(library)
+    active = st.session_state.get('dataset_activo')
+    name = st.selectbox(label, names, index=names.index(active) if active in names else 0, key=key + '_seleccion')
+    st.caption(f'Fuente: {name} · Copia de trabajo en esta sesión')
+    if 'semanal.csv' in name:
+        st.caption('Datos sintéticos; no representan cifras oficiales.')
+    elif 'acciones' in name:
+        st.caption('Datos mixtos: contexto real y escenarios/etiquetas simulados.')
+    return name, library[name].copy()
+
+
+def editor_dataset(api, name, frame):
+    st.caption('Edita celdas o elimina filas. Los cambios solo se aplican al pulsar Guardar preparación.')
+    st.caption('Guardar conserva esta selección como copia de trabajo de la sesión. El archivo original permanece intacto.')
+    revision = st.session_state.get('edicion_revision', 0)
+    edited = st.data_editor(frame, num_rows='dynamic', disabled=['_fila_origen'], width='stretch', height=350,
+                            key=f'editor_{name}_{revision}')
+    with st.expander('Tipos, nombres, categorías y dummies'):
+        a, b = st.columns(2)
+        with a:
+            rename = st.text_area('Renombrar columnas (JSON)', '{}', key='renombrar_' + name,
+                                  help='Ejemplo: {"fecha": "fecha_inicio_semana"}')
+            types = st.text_area('Cambiar tipos (JSON)', '{}', key='tipos_' + name,
+                                 help='Ejemplo: {"lluvia_mm": "float64", "provincia": "category"}')
+        with b:
+            maps = st.text_area('Mapas de categorías (JSON)', '{}', key='mapas_' + name,
+                                help='Ejemplo: {"deteccion": {"Sí": 1, "No": 0}}')
+            dummies = st.multiselect('Generar dummies', [c for c in frame if c != '_fila_origen'], key='dummy_' + name)
+        remove_null = st.checkbox('Eliminar filas con valores faltantes', key='nulos_' + name)
+        remove = st.multiselect('Eliminar columnas', [c for c in frame if c != '_fila_origen'], key='eliminar_' + name)
+    if st.button('Guardar preparación', type='primary'):
         try:
-            entries = dict(zip(edited["Entrada del modelo"], edited["Columna de origen"]))
-            if any(not isinstance(v, str) or not v for v in entries.values()):
-                raise ValueError("Selecciona la columna de origen para cada una de las 20 entradas.")
-            recipe = {"fuente": source_name.strip(), "filas": preview["filas"], "eliminar_columnas": drop,
-                      "eliminar_filas": filas_a_eliminar(rows_text, len(frame)), "eliminar_nulos": remove_nulls,
-                      "entradas": entries, "valores": {row["Entrada del modelo"]: mapa_json(row["Mapa de valores (JSON)"])
-                                                       for row in edited.to_dict("records")},
-                      "objetivo": target, "valores_objetivo": mapa_json(target_map), "aplicar_scaler": apply_scaler}
-            with st.spinner("Preparando y validando en la API…"):
-                result = api.preparar(recipe)
-            st.session_state["dataset_preparado"] = result
-            st.session_state["dataset_receta"] = recipe
-            st.session_state["dataset_receta_hash"] = digest
-            st.success(f"Dataset preparado: {len(result['filas'])} filas, {result['eliminadas']} eliminadas. Solo las 20 entradas mapeadas llegan a los modelos.")
-            if result["columnas_omitidas"]:
-                st.caption("Columnas no utilizadas: " + ", ".join(result["columnas_omitidas"]))
-            st.session_state["lote_origen_activo"] = "subido"
-            st.session_state["_lote_selector"] = "subido"
-            st.success("El nuevo lote está listo para analizarse abajo. También está disponible en el selector de Métricas.")
-        except (ValueError, TypeError, ErrorAPI) as exc:
+            edited = edited.drop(columns=remove)
+            renames = json.loads(rename)
+            if '_fila_origen' in renames and renames['_fila_origen'] != '_fila_origen':
+                raise ValueError('Conserva _fila_origen para mantener la correspondencia de los registros.')
+            if edited['_fila_origen'].isna().any():
+                start = int(frame['_fila_origen'].max()) + 1
+                mask = edited['_fila_origen'].isna()
+                edited.loc[mask, '_fila_origen'] = range(start, start + int(mask.sum()))
+            response = api.request('POST', '/datasets/prepare', {'filas': filas(edited), 'renombrar': renames,
+                                   'tipos': json.loads(types), 'mapas': json.loads(maps), 'dummies': dummies,
+                                   'eliminar_nulos': remove_null})
+            st.session_state['datasets'][name] = pd.DataFrame(response['filas'])
+            st.session_state['dataset_activo'] = name
+            st.session_state['preparacion_info'] = response['dummies']
+            st.session_state['edicion_revision'] = revision + 1
+            st.rerun()
+        except (ErrorAPI, ValueError, KeyError, TypeError) as exc:
             st.error(str(exc))
-            st.caption("El último dataset preparado se conserva; este borrador todavía no está activo.")
+    if st.session_state.get('preparacion_info'):
+        st.dataframe(st.session_state['preparacion_info'], hide_index=True, width='stretch')
+
+
+def cargar_imagenes(files):
+    return [{'nombre': f.name, 'contenido': base64.b64encode(f.getvalue()).decode('ascii')} for f in files]
+
+
+def mapear_entradas(frame, columns, key):
+    """Solo selecciona correspondencias; no altera el CSV ni inventa valores."""
+    mapping = {}
+    with st.expander('Mapear columnas a las entradas del modelo', expanded=not set(columns).issubset(frame.columns)):
+        available = list(frame.columns)
+        for column in dict.fromkeys(columns):
+            source = st.selectbox(column, available, index=available.index(column) if column in available else None,
+                                  key=key + '_' + column, placeholder='Selecciona una columna')
+            mapping[column] = source
+    if any(value is None for value in mapping.values()):
+        st.info('Completa el mapeo de columnas para habilitar el envío.')
+        return None
+    result = frame.copy()
+    for target, source in mapping.items():
+        result[target] = frame[source]
+    return result

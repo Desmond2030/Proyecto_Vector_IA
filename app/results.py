@@ -1,98 +1,93 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Resultados de ambos modelos: exportación alineada y gráficos interactivos."""
-import io
-import zipfile
+import json
 import altair as alt
 import pandas as pd
 import streamlit as st
+from app.ui import COLORES
 
 
-def tabla_predicciones(payload, results):
-    source = payload.get("datos_exportacion", payload)
-    output = pd.DataFrame(source["filas"], columns=source["columnas"]).copy()
-    if any(len(values) != len(output) for values in results.values()):
-        raise ValueError("Las predicciones no corresponden a las filas del dataset.")
-    def agregar(name, values):
-        candidate, suffix = name, 2
-        while candidate in output.columns:
-            candidate = f"{name}_{suffix}"
-            suffix += 1
-        output[candidate] = values
-    agregar("Fila_origen", payload.get("filas_origen", list(range(1, len(output) + 1))))
-    agregar("Prediccion_Abandono_Modelo_1", [int(p.abandono == "Yes") for p in results["modelo_1"]])
-    agregar("Probabilidad_Abandono_Modelo_2", [p.probabilidad for p in results["modelo_2"]])
-    for slot in ("modelo_1", "modelo_2"):
-        agregar(f"Archivo_{slot}", [p.modelo for p in results[slot]])
-    agregar("Umbral_Modelo_1", [p.umbral for p in results["modelo_1"]])
-    return output
+def descargar(frame, label='Descargar CSV', nombre='vectoria.csv', key=None):
+    st.download_button(label, frame.to_csv(index=False).encode('utf-8-sig'), nombre, 'text/csv', key=key)
 
 
-def filas_graficos(payload, results):
-    indices = payload.get("filas_origen", list(range(1, len(payload["filas"]) + 1)))
+def matriz_interactiva(cells):
+    frame = pd.DataFrame(cells)
+    if frame.empty:
+        st.info('No hay columnas suficientes para una matriz.')
+        return
+    frame['detalle'] = frame['valor'].map(lambda v: 'No definido' if pd.isna(v) else f'{v:.3f}')
+    base = alt.Chart(frame).encode(x=alt.X('variable_2:N', title=None, sort=None, axis=alt.Axis(labelLimit=240, labelAngle=-45)),
+                                  y=alt.Y('variable_1:N', title=None, sort=None, axis=alt.Axis(labelLimit=240)),
+                                  tooltip=['variable_1', 'variable_2', 'metodo', 'detalle'])
+    color = alt.condition('isValid(datum.valor)', alt.Color('valor:Q', scale=alt.Scale(domain=[-1, 0, 1], range=['#386c9b', '#f3f1e7', '#b86a16']), title='Coeficiente'), alt.value('#d9ddd7'))
+    chart = base.mark_rect(stroke='#f7f6f2', strokeWidth=1).encode(color=color)
+    if frame.variable_1.nunique() <= 12:
+        chart += base.mark_text(fontSize=11).encode(text=alt.Text('valor:Q', format='.2f'), color=alt.value('#232827'))
+    st.altair_chart(chart.properties(height=max(260, frame.variable_1.nunique() * 27)), width='stretch')
+    st.dataframe(frame, hide_index=True, width='stretch', height=230)
+    descargar(frame, 'Descargar coeficientes', 'correlaciones.csv')
+
+
+def mostrar_resultado(result):
+    cnn, rnn, ann = result.get('cnn'), result.get('rnn'), result.get('ann')
+    if cnn:
+        st.subheader(cnn['especie'].replace('_', ' ').capitalize())
+        st.caption(f"aegypti_detectado = {cnn['aegypti_detectado']}")
+    if rnn:
+        st.markdown('**Pronóstico de casos**')
+        frame = pd.DataFrame(rnn['semanas'])
+        chart = alt.Chart(frame).mark_line(point=True, color=COLORES['prediccion']).encode(
+            x=alt.X('fecha:T', title='Semana'), y=alt.Y('casos:Q', title='Casos de dengue', scale=alt.Scale(zero=False)), tooltip=['fecha', 'casos'])
+        st.altair_chart(chart.properties(height=190), width='stretch')
+        st.metric('Total del horizonte', f"{rnn['total']:,.1f} casos")
+    if ann:
+        st.markdown('**Acción sugerida por ANN**')
+        st.success(ann['accion'].replace('_', ' ').capitalize())
+    for slot, error in result.get('errores', {}).items():
+        st.info(f'{slot.upper()}: {error}')
+    if result.get('artefactos'):
+        with st.expander('Modelos y datos utilizados'):
+            st.json({'modelos': result['artefactos'], 'entradas': result.get('entrada_modelos', {})})
+
+
+def tabla_predicciones(results):
     rows = []
-    for i, first, second, record in zip(indices, results["modelo_1"], results["modelo_2"], payload["filas"]):
-        row = {"fila": i, "modelo_1_clase": int(first.abandono == "Yes"),
-               "modelo_2_probabilidad": second.probabilidad}
-        if "Abandono" in record:
-            row["Real"] = int(record["Abandono"])
+    for result in results:
+        row = dict(result['entrada'])
+        additions = {'fila_resultado': result['fila'], 'especie_predicha': (result['cnn'] or {}).get('especie'),
+                     'deteccion_predicha': (result['cnn'] or {}).get('aegypti_detectado'),
+                     'casos_pronosticados': (result['rnn'] or {}).get('total'),
+                     'accion_recomendada': (result['ann'] or {}).get('accion'),
+                     'errores': json.dumps(result['errores'], ensure_ascii=False)}
+        additions.update({f'modelo_{k}': v for k, v in result['artefactos'].items()})
+        for i, point in enumerate((result.get('rnn') or {}).get('semanas', []), 1):
+            additions[f'casos_h{i}'] = point['casos']
+            additions[f'fecha_h{i}'] = point['fecha']
+        for key, value in additions.items():
+            while key in row:
+                key += '_resultado'
+            row[key] = value
         rows.append(row)
-    return rows
+    return pd.DataFrame(rows)
 
 
-def graficos_modelos(rows):
-    frame = pd.DataFrame(rows)
-    with st.container():
-        st.subheader("Modelo 1 · clasificación")
-        counts = []
-        for field, serie in [("modelo_1_clase", "Predicha"), ("Real", "Real")]:
-            if field in frame:
-                for label in (0, 1):
-                    counts.append({"Clase": "Permanece (0)" if label == 0 else "Abandona (1)",
-                                   "Serie": serie, "Clientes": int(frame[field].eq(label).sum())})
-        chart = alt.Chart(alt.Data(values=counts)).mark_bar().encode(
-            x=alt.X("Clase:N", title="Clase de abandono", axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("Clientes:Q", axis=alt.Axis(tickMinStep=1)), xOffset="Serie:N",
-            color=alt.Color("Serie:N", scale=alt.Scale(domain=["Predicha", "Real"], range=["#2563a6", "#b9753b"])),
-            tooltip=["Clase:N", "Serie:N", "Clientes:Q"]).properties(height=300)
-        st.altair_chart(chart, width="stretch")
-    # Segunda fila a ancho completo: muchos clientes necesitan un eje navegable.
-    st.subheader("Modelo 2 · probabilidad por cliente")
-    values = frame.to_dict("records")
-    tooltip = [alt.Tooltip("fila:Q", title="Fila original"),
-               alt.Tooltip("modelo_2_probabilidad:Q", title="Probabilidad", format=".2%")]
-    if "Real" in frame:
-        tooltip.append(alt.Tooltip("Real:N", title="Clase real"))
-    chart = alt.Chart(alt.Data(values=values)).mark_circle(size=65, opacity=.75).encode(
-        x=alt.X("fila:Q", title="Cliente (posición original de la fila)", axis=alt.Axis(tickMinStep=1)),
-        y=alt.Y("modelo_2_probabilidad:Q", title="Probabilidad de abandono", scale=alt.Scale(domain=[0, 1]),
-                axis=alt.Axis(format=".0%")), tooltip=tooltip)
-    if "Real" in frame:
-        chart = chart.encode(color=alt.Color("Real:N", title="Clase real", scale=alt.Scale(range=["#0f766e", "#b9753b"])))
-    else:
-        chart = chart.encode(color=alt.value("#7863a7"))
-    st.altair_chart(chart.properties(height=350).interactive(bind_y=False), width="stretch")
-    st.caption("Cada punto corresponde a una fila; acerca o desplaza el eje horizontal y consulta el detalle al pasar el cursor. Sin etiquetas reales se muestran solo las predicciones.")
-
-
-def matriz_interactiva(matrix):
-    values = [{"Real": str(real), "Predicción": str(pred), "Clientes": matrix[real][pred]}
-              for real in (0, 1) for pred in (0, 1)]
-    base = alt.Chart(alt.Data(values=values)).encode(
-        x=alt.X("Predicción:N", axis=alt.Axis(labelAngle=0)), y="Real:N",
-        tooltip=["Real:N", "Predicción:N", "Clientes:Q"])
-    cells = base.mark_rect().encode(color=alt.Color("Clientes:Q", scale=alt.Scale(scheme="blues")))
-    text = base.mark_text(fontSize=22).encode(text="Clientes:Q", color=alt.value("#b45309"))
-    st.altair_chart((cells + text).properties(height=240), width="stretch")
-
-
-def archivo_metricas(result):
-    """Solo evaluación: sin datos de clientes ni predicciones del lote."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("metricas.csv", pd.DataFrame(result["metricas"]).to_csv(index=False).encode("utf-8-sig"))
-        for slot, matrix in result["matrices"].items():
-            archive.writestr(f"{slot}_matriz.csv", pd.DataFrame(matrix, index=["Real 0", "Real 1"],
-                columns=["Predicción 0", "Predicción 1"]).to_csv().encode("utf-8-sig"))
-            report = {key: value for key, value in result["reportes"][slot].items() if isinstance(value, dict)}
-            archive.writestr(f"{slot}_reporte.csv", pd.DataFrame(report).T.to_csv().encode("utf-8-sig"))
-    return buffer.getvalue()
+def mostrar_evaluacion(result):
+    st.caption(f"{result['conjunto']} · {result['origen']} · {result['archivo_modelo']}")
+    metrics = pd.DataFrame([{'metrica': k, 'valor': v} for k, v in result['metricas'].items()])
+    st.dataframe(metrics, hide_index=True, width='stretch')
+    if result.get('matriz'):
+        matrix = pd.DataFrame(result['matriz'])
+        real = matrix.columns[0]
+        melted = matrix.melt(id_vars=[real], var_name='Predicha', value_name='Cantidad').rename(columns={real: 'Real'})
+        chart = alt.Chart(melted).mark_rect().encode(x='Predicha:N', y='Real:N', color=alt.Color('Cantidad:Q', scale=alt.Scale(scheme='purples')), tooltip=['Real', 'Predicha', 'Cantidad'])
+        st.altair_chart(chart.properties(height=290), width='stretch')
+    if result.get('por_clase'):
+        st.dataframe(pd.DataFrame(result['por_clase']), hide_index=True, width='stretch')
+    if result.get('predicciones'):
+        points = pd.DataFrame(result['predicciones'])
+        if {'real', 'prediccion'}.issubset(points):
+            chart = alt.Chart(points).mark_circle(color=COLORES['evaluacion']).encode(x='real:Q', y='prediccion:Q', tooltip=list(points.columns))
+            st.altair_chart(chart.properties(height=240), width='stretch')
+    for key in ['modelo', 'conjunto']:
+        metrics[key] = result[key]
+    descargar(metrics, 'Descargar métricas CSV', 'metricas.csv', key='metricas_' + result['id'])
