@@ -1,59 +1,91 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Estado de sesión y controles; las transformaciones se delegan a src a través de la API."""
+"""Copias de exploración y selección de muestras; los originales se leen por API."""
 import base64
 import json
+from pathlib import Path
 import pandas as pd
 import streamlit as st
-from app.client import ErrorAPI
+from app.client import ApiClient, ErrorAPI
 
 
 def filas(frame):
     return json.loads(frame.to_json(orient='records', date_format='iso'))
 
 
-def registrar_dataset(payload):
-    frame = pd.DataFrame(payload['filas'], columns=payload['columnas'])
-    if '_fila_origen' not in frame:
-        frame.insert(0, '_fila_origen', range(1, len(frame) + 1))
-    st.session_state.setdefault('datasets', {})[payload['fuente']] = frame
-    st.session_state['dataset_activo'] = payload['fuente']
-
-
-def selector_dataset(api, key='datos', label='Dataset', cargar=True):
-    library = st.session_state.setdefault('datasets', {})
-    if cargar:
-        with st.expander('Abrir datos del proyecto o subir un archivo', expanded=not library):
-            left, right = st.columns(2)
-            with left:
-                try:
-                    names = api.request('GET', '/datos')
-                    selected = st.selectbox('Archivo del proyecto', names, index=None, key=key + '_local')
-                    if st.button('Abrir archivo', key=key + '_abrir', disabled=not selected):
-                        registrar_dataset(api.request('GET', '/datos', params={'nombre': selected}))
-                        st.rerun()
-                except ErrorAPI as exc:
-                    st.error(str(exc))
-            with right:
-                upload = st.file_uploader('CSV, Excel o Parquet', type=['csv', 'xlsx', 'parquet'], max_upload_size=20, key=key + '_upload')
-                if st.button('Cargar archivo', key=key + '_cargar', disabled=upload is None):
-                    try:
-                        registrar_dataset(api.subir(upload))
-                        st.rerun()
-                    except ErrorAPI as exc:
-                        st.error(str(exc))
-    if not library:
-        st.info('Abre un dataset para continuar. No necesitas modelos para explorarlo.')
-        return None, None
-    names = list(library)
-    active = st.session_state.get('dataset_activo')
-    name = st.selectbox(label, names, index=names.index(active) if active in names else 0, key=key + '_seleccion')
-    st.caption(f'Fuente: {name} · Copia de trabajo en esta sesión')
-    if 'semanal.csv' in name:
-        st.caption('Datos sintéticos; no representan cifras oficiales.')
+def procedencia(name):
+    if 'dengue_semanal' in name:
+        st.caption('Serie provincial sintética; no representa cifras oficiales.')
     elif 'acciones' in name:
-        st.caption('Datos mixtos: contexto real y escenarios/etiquetas simulados.')
+        st.caption('Acciones: contexto real y escenarios, predicciones y etiquetas simulados.')
+    elif 'nacional_real' in name:
+        st.caption('Serie nacional: casos y clima del dataset académico procesado.')
+
+
+def selector_dataset(api, key='datos', label='Dataset procesado'):
+    names = api.request('GET', '/datos')
+    if not names:
+        st.info('No hay archivos en la carpeta de datos procesados.')
+        return None, None
+    name = st.selectbox(label, names, format_func=lambda p: Path(p).stem.replace('vectoria_', '').replace('_', ' ').capitalize(), key=key + '_seleccion')
+    library = st.session_state.setdefault('datasets', {})
+    if name not in library:
+        payload = api.request('GET', '/datos', params={'nombre': name})
+        frame = pd.DataFrame(payload['filas'], columns=payload['columnas'])
+        frame.insert(0, '_fila_origen', range(1, len(frame) + 1))
+        library[name] = frame
+    procedencia(name)
+    if st.button('Restablecer copia desde el original', key=key + '_restablecer'):
+        library.pop(name, None)
+        st.session_state.pop('analisis', None)
+        st.session_state.pop('preparacion_info', None)
+        st.session_state['edicion_revision'] = st.session_state.get('edicion_revision', 0) + 1
+        st.rerun()
     return name, library[name].copy()
 
+
+@st.cache_data(show_spinner=False, max_entries=48)
+def contenido_imagen(url, ruta):
+    return base64.b64decode(ApiClient(url).request('GET', '/imagen', params={'nombre': ruta})['contenido'])
+
+
+def elegir_muestras(api, key, limite):
+    a, b = st.columns(2)
+    conjunto = a.selectbox('Conjunto', ['val', 'train', 'test'], key=key + '_conjunto',
+                          format_func=lambda v: {'val': 'Validación', 'train': 'Entrenamiento', 'test': 'Prueba'}[v])
+    meta = api.request('GET', '/imagenes', params={'conjunto': conjunto, 'limite': 1})
+    especie = b.selectbox('Especie del dataset', meta['clases'], key=key + '_especie')
+    total = meta['conteos'][especie]
+    pages = max(1, (total + limite - 1) // limite)
+    page = st.number_input('Página de muestras', min_value=1, max_value=pages, value=1,
+                           key=key + conjunto + especie + '_pagina')
+    st.caption(f'{total:,} imágenes de {especie} · página {page} de {pages}')
+    return api.request('GET', '/imagenes', params={'conjunto': conjunto, 'especie': especie, 'limite': limite, 'pagina': page - 1})['imagenes']
+
+
+def selector_imagen(api, key):
+    source = st.radio('Origen de la imagen', ['Muestra del proyecto', 'Subir imagen'], horizontal=True, key=key + '_origen')
+    if source == 'Subir imagen':
+        upload = st.file_uploader('Imagen JPG o PNG', type=['jpg', 'jpeg', 'png'], max_upload_size=20, key=key + '_imagen')
+        if upload is None:
+            return None
+        st.image(upload, width='stretch')
+        return {'nombre': upload.name, 'contenido': base64.b64encode(upload.getvalue()).decode()}
+    images = elegir_muestras(api, key, 12)
+    if not images:
+        st.info('No hay imágenes en esta selección.')
+        return None
+    selected = st.selectbox('Imagen', images, format_func=lambda v: v['nombre'], key=key + '_muestra')
+    st.image(contenido_imagen(api.url, selected['ruta']), width='stretch')
+    st.caption('La etiqueta del dataset no se envía como resultado: la CNN clasificará la imagen.')
+    return {'ruta': selected['ruta']}
+
+
+def galeria_imagenes(api):
+    images = elegir_muestras(api, 'galeria', 9)
+    columns = st.columns(3)
+    for i, sample in enumerate(images):
+        with columns[i % 3]:
+            st.image(contenido_imagen(api.url, sample['ruta']), caption=sample['nombre'], width='stretch')
 
 def editor_dataset(api, name, frame):
     st.caption('Edita celdas o elimina filas. Los cambios solo se aplican al pulsar Guardar preparación.')
@@ -96,25 +128,3 @@ def editor_dataset(api, name, frame):
             st.error(str(exc))
     if st.session_state.get('preparacion_info'):
         st.dataframe(st.session_state['preparacion_info'], hide_index=True, width='stretch')
-
-
-def cargar_imagenes(files):
-    return [{'nombre': f.name, 'contenido': base64.b64encode(f.getvalue()).decode('ascii')} for f in files]
-
-
-def mapear_entradas(frame, columns, key):
-    """Solo selecciona correspondencias; no altera el CSV ni inventa valores."""
-    mapping = {}
-    with st.expander('Mapear columnas a las entradas del modelo', expanded=not set(columns).issubset(frame.columns)):
-        available = list(frame.columns)
-        for column in dict.fromkeys(columns):
-            source = st.selectbox(column, available, index=available.index(column) if column in available else None,
-                                  key=key + '_' + column, placeholder='Selecciona una columna')
-            mapping[column] = source
-    if any(value is None for value in mapping.values()):
-        st.info('Completa el mapeo de columnas para habilitar el envío.')
-        return None
-    result = frame.copy()
-    for target, source in mapping.items():
-        result[target] = frame[source]
-    return result

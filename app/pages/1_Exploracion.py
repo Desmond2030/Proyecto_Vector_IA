@@ -3,12 +3,16 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from app.client import ErrorAPI
-from app.datasets import selector_dataset, editor_dataset, filas
+from app.datasets import selector_dataset, editor_dataset, filas, galeria_imagenes
 from app.results import descargar, matriz_interactiva
 from app.ui import cabecera, api_activa, COLORES
 
 cabecera('explorar', '02', 'Los datos cuentan la historia.', 'Explora distribuciones, compara variables y prepara una copia de tus datos.')
 api = api_activa()
+view = st.radio('Contenido', ['Datos procesados', 'Muestras de imágenes'], horizontal=True)
+if view == 'Muestras de imágenes':
+    galeria_imagenes(api)
+    st.stop()
 name, frame = selector_dataset(api, 'explorar')
 if frame is not None:
     a, b, c = st.columns(3)

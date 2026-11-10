@@ -1,9 +1,15 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Contratos de VectorIA. Los nombres y el orden entrenado viven en Configuracion."""
+"""Contratos pequeños para exploración, una observación y evaluación."""
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Slot = Literal['cnn', 'rnn', 'ann']
+SERIE_NACIONAL = 'data/proceced/archivos_parquet/vectoria_dengue_nacional_real.parquet'
+COLUMNAS_RNN = ['poblacion', 'lluvia_mm', 'temp_max_c', 'temp_min_c', 'humedad_rel_pct'] + [
+    f'{variable}_lag{lag}' for variable in ['lluvia_mm', 'temp_max_c', 'temp_min_c', 'humedad_rel_pct']
+    for lag in range(6, 0, -1)]
+COLUMNAS_ANN = ['casos_pred_4sem', 'casos_umbral_endemico', 'lluvia_14d_mm',
+                'temp_max', 'temp_min', 'humedad', 'aegypti_detectado']
 
 
 class Contrato(BaseModel):
@@ -16,8 +22,9 @@ class Modelo(Contrato):
     clases: list[str] = Field(default_factory=list)
     scaler: str | None = None
     scaler_salida: str | None = None
-    ventana: int = Field(default=26, ge=1, le=520)
-    horizonte: int = Field(default=4, ge=1, le=52)
+    serie: str = SERIE_NACIONAL
+    ventana: Literal[26] = 26
+    horizonte: Literal[4] = 4
     fecha: str = 'fecha_inicio_semana'
     grupo: str = 'provincia'
     objetivo: str = 'casos_dengue'
@@ -34,9 +41,8 @@ class Modelo(Contrato):
 
 class Configuracion(Contrato):
     cnn: Modelo = Field(default_factory=lambda: Modelo(clases=['aegypti', 'albopictus', 'anopheles', 'culex']))
-    rnn: Modelo = Field(default_factory=lambda: Modelo(columnas=['casos_dengue', 'lluvia_mm', 'temp_max_c', 'temp_min_c', 'humedad_rel_pct']))
-    ann: Modelo = Field(default_factory=lambda: Modelo(
-        columnas=['casos_pred_4sem', 'casos_umbral_endemico', 'lluvia_14d_mm', 'temp_max', 'temp_min', 'humedad', 'aegypti_detectado', 'semana_epi'],
+    rnn: Modelo = Field(default_factory=lambda: Modelo(columnas=COLUMNAS_RNN))
+    ann: Modelo = Field(default_factory=lambda: Modelo(columnas=COLUMNAS_ANN,
         clases=['monitoreo_normal', 'eliminacion_criaderos', 'fumigacion_focalizada', 'alerta_sanitaria']))
 
 
@@ -60,28 +66,45 @@ class Analisis(Tabla):
 
 
 class Imagen(Contrato):
-    nombre: str
-    contenido: str
+    ruta: str | None = None
+    nombre: str | None = None
+    contenido: str | None = None
+
+    @model_validator(mode='after')
+    def origen_unico(self):
+        if self.ruta:
+            if self.nombre or self.contenido:
+                raise ValueError('Elige una muestra del proyecto o una imagen cargada.')
+        elif not self.nombre or not self.contenido:
+            raise ValueError('Falta la imagen.')
+        return self
+
+
+class Contexto(Contrato):
+    casos_umbral_endemico: float = Field(ge=0)
+    lluvia_14d_mm: float = Field(ge=0)
+    temp_max: float
+    temp_min: float
+    humedad: float = Field(ge=0, le=100)
+
+    @model_validator(mode='after')
+    def temperaturas(self):
+        if self.temp_min > self.temp_max:
+            raise ValueError('La temperatura mínima no puede superar la máxima.')
+        return self
 
 
 class Inferencia(Contrato):
-    registros: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
-    imagenes: list[Imagen] = Field(default_factory=list, max_length=100)
-    historial: list[dict[str, Any]] = Field(default_factory=list, max_length=10000)
-    columna_imagen: str = 'imagen'
-    revision: str | None = None
+    imagen: Imagen
+    fecha: str
+    ubicacion: str
+    contexto: Contexto
+    revision: str
 
 
-class Evaluacion(Inferencia):
+class Evaluacion(Contrato):
     modelo: Slot
-    conjunto: str = Field(min_length=1, max_length=200)
-    objetivo: str = 'recomendacion'
-
-
-class Importacion(Tabla):
-    revision: str | None = None
-
-
-class SeleccionEvaluacion(Contrato):
-    modelo: Slot
-    id: str
+    revision: str
+    conjunto: Literal['val', 'test'] = 'val'
+    limite: int = Field(default=20, ge=1, le=1000)
+    ubicacion: str | None = None

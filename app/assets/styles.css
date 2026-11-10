@@ -1,7 +1,7 @@
 /* ESTADO_ARCHIVO: EN_MODIFICACION */
 :root { --accent: #087F72; --paper: #f7f6f2; --ink: #242727; }
 .stApp, [data-testid="stHeader"] { background: var(--paper); color: var(--ink); }
-.block-container { max-width: 1460px; padding: 5.5rem 2.6rem 2.3rem; }
+.block-container { max-width: 1460px; padding: 4.25rem 2.6rem 2.3rem; }
 h1, h2, h3 { font-family: Georgia, 'Times New Roman', serif !important; color: var(--ink); letter-spacing: -.035em; }
 h1 { font-size: clamp(2.3rem, 4.1vw, 4.4rem) !important; font-weight: 600 !important; line-height: 1.06 !important; }
 h2 { font-size: 2rem !important; } h3 { font-size: 1.5rem !important; }
@@ -34,4 +34,43 @@ p, label, [data-testid="stCaptionContainer"] { line-height: 1.55; }
 [data-testid="stImage"] img { border-radius: 10px; }
 [data-testid="stFileUploaderDropzone"] { background: #f0f0eb; border: 1px dashed #adb8ae; }
 [data-testid="stToolbar"] { right: 1rem; }
-@media(max-width: 700px) { .block-container { padding: 5rem 1rem 2rem; } .hero-title { font-size: 3.5rem; } .masthead span { display: none; } }
+@media(max-width: 700px) { .block-container { padding: 4.25rem 1rem 2rem; } .hero-title { font-size: 3.5rem; } .masthead span { display: none; } }
+
+/* Mantener controles y tarjetas legibles al cambiar de página o de ancho. */
+[data-testid="stMetricValue"] { font-size: clamp(1.35rem, 2.3vw, 2rem); }
+[data-testid="stCaptionContainer"] p { overflow-wrap: anywhere; }
+[data-testid="stHorizontalBlock"] { gap: 1.25rem; }
+@media(max-width: 900px) {
+  [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: min(100%, 320px); flex: 1 1 320px; }
+  .steps { align-items: flex-start; gap: .65rem; }
+}
+
+/* Navegación de VectorIA: cuatro accesos con contraste propio. */
+.st-key-vectoria_navigation { margin: 0 0 1.25rem; }
+.st-key-vectoria_navigation [data-testid="stHorizontalBlock"] {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem;
+}
+.st-key-vectoria_navigation [data-testid="stColumn"] {
+  min-width: 0 !important; width: 100% !important;
+}
+.st-key-vectoria_navigation [data-testid="stPageLink-NavLink"] {
+  display: flex; align-items: center; width: 100%; min-height: 3rem;
+  padding: .7rem 1rem; border: 1px solid #bcc8c0; border-radius: .6rem;
+  background: #fff; color: #242727 !important; text-decoration: none;
+}
+.st-key-vectoria_navigation [data-testid="stPageLink-NavLink"] * {
+  color: inherit !important;
+}
+.st-key-vectoria_navigation [data-testid="stPageLink-NavLink"]:hover {
+  border-color: var(--accent); background: #edf3ee;
+}
+.st-key-vectoria_navigation [data-testid="stPageLink-NavLink"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+@media(max-width: 600px) {
+  .st-key-vectoria_navigation [data-testid="stHorizontalBlock"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .st-key-vectoria_navigation [data-testid="stPageLink-NavLink"] { padding: .65rem .75rem; }
+}

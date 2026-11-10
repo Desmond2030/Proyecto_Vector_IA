@@ -1,5 +1,4 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-import json
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -30,64 +29,72 @@ def matriz_interactiva(cells):
 
 def mostrar_resultado(result):
     cnn, rnn, ann = result.get('cnn'), result.get('rnn'), result.get('ann')
-    if cnn:
-        st.subheader(cnn['especie'].replace('_', ' ').capitalize())
-        st.caption(f"aegypti_detectado = {cnn['aegypti_detectado']}")
+    titles = ['01 · Identificación CNN', '02 · Pronóstico RNN', '03 · Recomendación ANN']
+    for column, slot, title in zip(st.columns(3), ['cnn', 'rnn', 'ann'], titles):
+        with column:
+            with st.container(border=True):
+                st.markdown(f'**{title}**')
+                value = result.get(slot)
+                if value is None:
+                    st.info(result.get('errores', {}).get(slot, 'Sin resultado disponible.'))
+                elif slot == 'cnn':
+                    st.subheader(value['especie'].replace('_', ' ').capitalize())
+                    st.caption('Aegypti detectado: ' + ('Sí' if value['aegypti_detectado'] else 'No'))
+                elif slot == 'rnn':
+                    st.metric('Total de las próximas 4 semanas', f"{value['total']:,.1f}")
+                    st.caption('Casos previstos · suma sin redondear para la entrada ANN')
+                    frame = pd.DataFrame(value['semanas']).rename(columns={'fecha': 'Semana', 'casos': 'Casos previstos'})
+                    st.dataframe(frame, hide_index=True, width='stretch',
+                                 column_config={'Casos previstos': st.column_config.NumberColumn(format='%.2f')})
+                else:
+                    st.subheader(value['accion'].replace('_', ' ').capitalize())
+                    st.caption('Calculada con la detección, el pronóstico y el contexto ingresado.')
     if rnn:
-        st.markdown('**Pronóstico de casos**')
         frame = pd.DataFrame(rnn['semanas'])
         chart = alt.Chart(frame).mark_line(point=True, color=COLORES['prediccion']).encode(
-            x=alt.X('fecha:T', title='Semana'), y=alt.Y('casos:Q', title='Casos de dengue', scale=alt.Scale(zero=False)), tooltip=['fecha', 'casos'])
-        st.altair_chart(chart.properties(height=190), width='stretch')
-        st.metric('Total del horizonte', f"{rnn['total']:,.1f} casos")
-    if ann:
-        st.markdown('**Acción sugerida por ANN**')
-        st.success(ann['accion'].replace('_', ' ').capitalize())
-    for slot, error in result.get('errores', {}).items():
-        st.info(f'{slot.upper()}: {error}')
-    if result.get('artefactos'):
-        with st.expander('Modelos y datos utilizados'):
-            st.json({'modelos': result['artefactos'], 'entradas': result.get('entrada_modelos', {})})
+            x=alt.X('fecha:T', title='Semana futura', axis=alt.Axis(format='%d/%m/%Y')),
+            y=alt.Y('casos:Q', title='Casos previstos', scale=alt.Scale(zero=False)),
+            tooltip=['fecha', alt.Tooltip('casos:Q', format='.2f')])
+        st.altair_chart(chart.properties(height=240), width='stretch')
+    summary = {'Fecha de referencia': result['fecha'], 'Ubicación': result['ubicacion'],
+               'Especie': cnn['especie'] if cnn else 'Pendiente',
+               'Detección aegypti': cnn['aegypti_detectado'] if cnn else None,
+               'Casos en 4 semanas': rnn['total'] if rnn else None,
+               'Recomendación': ann['accion'] if ann else 'Pendiente'}
+    if rnn:
+        summary.update({f'Semana {i + 1}': point['casos'] for i, point in enumerate(rnn['semanas'])})
+    with st.expander('Resumen conjunto y entradas utilizadas'):
+        st.dataframe(pd.DataFrame([summary]), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame([result['entrada_modelos']]), hide_index=True, width='stretch')
+        for slot, path in result['artefactos'].items():
+            st.caption(f'{slot.upper()}: {path}')
+        if ann and ann.get('probabilidades'):
+            st.dataframe(pd.DataFrame([ann['probabilidades']]), hide_index=True, width='stretch')
+        descargar(pd.DataFrame([summary]), 'Descargar resultado', 'prediccion_vectoria.csv')
 
 
-def tabla_predicciones(results):
-    rows = []
-    for result in results:
-        row = dict(result['entrada'])
-        additions = {'fila_resultado': result['fila'], 'especie_predicha': (result['cnn'] or {}).get('especie'),
-                     'deteccion_predicha': (result['cnn'] or {}).get('aegypti_detectado'),
-                     'casos_pronosticados': (result['rnn'] or {}).get('total'),
-                     'accion_recomendada': (result['ann'] or {}).get('accion'),
-                     'errores': json.dumps(result['errores'], ensure_ascii=False)}
-        additions.update({f'modelo_{k}': v for k, v in result['artefactos'].items()})
-        for i, point in enumerate((result.get('rnn') or {}).get('semanas', []), 1):
-            additions[f'casos_h{i}'] = point['casos']
-            additions[f'fecha_h{i}'] = point['fecha']
-        for key, value in additions.items():
-            while key in row:
-                key += '_resultado'
-            row[key] = value
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-
-def mostrar_evaluacion(result):
-    st.caption(f"{result['conjunto']} · {result['origen']} · {result['archivo_modelo']}")
-    metrics = pd.DataFrame([{'metrica': k, 'valor': v} for k, v in result['metricas'].items()])
+def mostrar_evaluacion(result, key='evaluacion'):
+    st.caption(f"{result['conjunto']} · {result['fecha'][:19]} UTC · {result.get('muestras', '—')} muestras")
+    st.caption(result['archivo_modelo'])
+    metrics = pd.DataFrame([{'Métrica': k, 'Valor': v} for k, v in result['metricas'].items()])
     st.dataframe(metrics, hide_index=True, width='stretch')
     if result.get('matriz'):
         matrix = pd.DataFrame(result['matriz'])
         real = matrix.columns[0]
         melted = matrix.melt(id_vars=[real], var_name='Predicha', value_name='Cantidad').rename(columns={real: 'Real'})
-        chart = alt.Chart(melted).mark_rect().encode(x='Predicha:N', y='Real:N', color=alt.Color('Cantidad:Q', scale=alt.Scale(scheme='purples')), tooltip=['Real', 'Predicha', 'Cantidad'])
-        st.altair_chart(chart.properties(height=290), width='stretch')
+        chart = alt.Chart(melted).mark_rect().encode(
+            x=alt.X('Predicha:N', sort=None), y=alt.Y('Real:N', sort=None),
+            color=alt.Color('Cantidad:Q', scale=alt.Scale(scheme='purples')), tooltip=['Real', 'Predicha', 'Cantidad'])
+        st.altair_chart(chart.properties(height=290), width='stretch', key=key + result['id'] + '_matriz')
     if result.get('por_clase'):
         st.dataframe(pd.DataFrame(result['por_clase']), hide_index=True, width='stretch')
+    if result.get('por_horizonte'):
+        st.dataframe(pd.DataFrame(result['por_horizonte']), hide_index=True, width='stretch')
     if result.get('predicciones'):
         points = pd.DataFrame(result['predicciones'])
         if {'real', 'prediccion'}.issubset(points):
-            chart = alt.Chart(points).mark_circle(color=COLORES['evaluacion']).encode(x='real:Q', y='prediccion:Q', tooltip=list(points.columns))
-            st.altair_chart(chart.properties(height=240), width='stretch')
-    for key in ['modelo', 'conjunto']:
-        metrics[key] = result[key]
-    descargar(metrics, 'Descargar métricas CSV', 'metricas.csv', key='metricas_' + result['id'])
+            chart = alt.Chart(points).mark_circle(color=COLORES['evaluacion']).encode(
+                x=alt.X('real:Q', title='Casos observados'), y=alt.Y('prediccion:Q', title='Casos previstos'),
+                tooltip=list(points.columns))
+            st.altair_chart(chart.properties(height=240), width='stretch', key=key + result['id'] + '_puntos')
+    descargar(metrics, 'Descargar métricas', 'metricas.csv', key=key + result['id'])

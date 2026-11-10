@@ -1,124 +1,112 @@
 # ESTADO_ARCHIVO: EN_MODIFICACION
-"""Evaluación real o importada, siempre vinculada a un artefacto y conjunto."""
+"""Evaluaciones calculadas con las clases de src y persistidas en la API."""
 from datetime import datetime, timezone
 from uuid import uuid4
+import json
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, mean_absolute_error, mean_squared_error
-from api.datasets import matriz
-from api.loaders import API, guardar_json, imagenes_temporales, serializar
-from api.predict import activo, pronosticar
+from api.loaders import API, ROOT, datos_procesados, guardar_json, muestras, serializar
+from api.predict import activo
 
 ARCHIVO = API / 'evaluaciones.json'
+ACCIONES = 'data/proceced/archivos_parquet/vectoria_acciones.parquet'
 
 
 def leer():
-    import json
-    return json.loads(ARCHIVO.read_text(encoding='utf-8')) if ARCHIVO.exists() else {'resultados': [], 'seleccion': {}}
+    return json.loads(ARCHIVO.read_text(encoding='utf-8')) if ARCHIVO.exists() else {'resultados': []}
 
 
-def registrar(model, conjunto, metricas, origen, **details):
-    result = {'id': uuid4().hex, 'modelo': model.slot, 'archivo_modelo': model.config.archivo,
-              'identidad': model.identidad, 'conjunto': conjunto, 'origen': origen,
-              'fecha': datetime.now(timezone.utc).isoformat(), 'metricas': metricas, **details}
-    return serializar(result)
+def vigentes(models):
+    records = leer()['resultados']
+    return {slot: next((r for r in reversed(records)
+                       if r['identidad'] == model.identidad and r['origen'] == 'Calculada'), None)
+            for slot, model in models.items()}
 
 
-def guardar(resultados):
-    data = leer()
-    for result in resultados:
-        data['resultados'].append(result)
-        data['seleccion'][result['modelo']] = result['id']
-    guardar_json(ARCHIVO, data)
-    return resultados
+def validacion_temporal(frame, fecha):
+    frame = frame.sort_values(fecha, kind='stable').copy()
+    dates = frame[fecha].drop_duplicates().sort_values()
+    if len(dates) < 2:
+        raise ValueError('No hay suficientes fechas para validación temporal.')
+    return frame.loc[frame[fecha] >= dates.iloc[int(len(dates) * .8)]].copy()
 
 
-def importar(request, models):
-    frame = pd.DataFrame(request.filas)
-    needed = {'modelo', 'conjunto', 'metrica', 'valor'}
-    if not needed.issubset(frame):
-        raise ValueError('El CSV requiere modelo, conjunto, metrica y valor.')
-    if frame[list(needed)].isna().any().any():
-        raise ValueError('Las métricas no pueden tener campos vacíos.')
-    frame['valor'] = pd.to_numeric(frame['valor'], errors='raise')
-    if not np.isfinite(frame['valor']).all():
-        raise ValueError('Las métricas deben ser finitas.')
-    if frame.duplicated(['modelo', 'conjunto', 'metrica']).any():
-        raise ValueError('Hay métricas duplicadas para el mismo modelo y conjunto.')
-    results = []
-    for (slot, conjunto), group in frame.groupby(['modelo', 'conjunto']):
-        model = activo(models, slot)
-        if not str(conjunto).strip():
-            raise ValueError('Identifica el conjunto de evaluación.')
-        results.append(registrar(model, str(conjunto), dict(zip(group.metrica, group.valor)), 'CSV importado'))
-    return guardar(results)
-
-
-def evaluar(request, models):
-    model = activo(models, request.modelo)
-    config = model.config
-    if not request.registros:
-        raise ValueError('Se requieren registros etiquetados.')
-    frame = pd.DataFrame(request.registros)
+def evaluar(request, models, errores=None):
+    model = activo(models, request.modelo, errores)
+    cfg = model.config
     if request.modelo == 'cnn':
         import tensorflow as tf
-        if request.objetivo not in frame:
-            raise ValueError('Falta la columna con la especie real.')
-        labels = frame[request.objetivo].astype(str).tolist()
-        if not set(labels).issubset(config.clases):
-            raise ValueError('Las etiquetas deben coincidir con las clases configuradas.')
-        with imagenes_temporales(request.imagenes) as images:
-            paths = [images[str(name)] for name in frame[request.columna_imagen]]
-            # Preparación y evaluación de la clase CNN, sin gráficos ni particiones nuevas.
-            ds = tf.data.Dataset.from_tensor_slices((paths, [config.clases.index(label) for label in labels]))
-            ds = ds.map(lambda path, label: (model.cnn._cargar_imagen(path), label)).batch(16)
-            model.cnn.val_data = ds
-            try:
-                report = model.cnn.evaluar(conjunto='val', mostrar=False)
-            finally:
-                model.cnn.val_data = None
+        images = []
+        for label in cfg.clases:
+            images.extend(muestras(request.conjunto, label, request.limite)['imagenes'])
+        if not images:
+            raise ValueError('No hay imágenes etiquetadas para evaluar.')
+        paths = [str(ROOT / p['ruta']) for p in images]
+        labels = [cfg.clases.index(p['especie']) for p in images]
+        ds = tf.data.Dataset.from_tensor_slices((paths, labels))
+        ds = ds.map(lambda path, label: (model.instancia._cargar_imagen(path), label)).batch(16)
+        model.instancia.val_data = ds
+        try:
+            report = model.instancia.evaluar(conjunto='val', mostrar=False)
+        finally:
+            model.instancia.val_data = None
+        metrics = report['metricas']
         details = {'matriz': report['matriz_confusion'].reset_index(),
                    'por_clase': report['reporte_por_clase'].reset_index(), 'predicciones': report['predicciones']}
-        metrics = report['metricas']
+        source = f'Imágenes / {request.conjunto} / hasta {request.limite} por especie'
+        count = len(images)
     elif request.modelo == 'ann':
-        if request.objetivo not in frame:
-            raise ValueError('Falta la acción real para evaluar.')
-        truth = frame[request.objetivo].astype(str)
-        if not set(truth).issubset(config.clases):
-            raise ValueError('Las acciones reales no coinciden con las clases configuradas.')
-        scores = model.ejecutar(matriz(frame, config, model.scaler))
-        predicted = np.array(config.clases)[scores.argmax(axis=1)]
-        report = classification_report(truth, predicted, labels=config.clases, output_dict=True, zero_division=0)
-        metrics = {'accuracy': accuracy_score(truth, predicted), 'f1_macro': report['macro avg']['f1-score'],
-                   'precision_macro': report['macro avg']['precision'], 'recall_macro': report['macro avg']['recall']}
-        details = {'por_clase': [{'Clase': name, **report[name]} for name in config.clases],
-                   'matriz': pd.DataFrame(confusion_matrix(truth, predicted, labels=config.clases),
-                                          index=pd.Index(config.clases, name='Real'), columns=config.clases).reset_index(),
-                   'predicciones': [{'real': a, 'predicha': b} for a, b in zip(truth, predicted)]}
+        frame = validacion_temporal(datos_procesados(ACCIONES), cfg.fecha)
+        model.instancia.make_prediction(data=frame[cfg.columnas], y=frame['recomendacion'],
+            target='recomendacion', categorias=cfg.clases, eval=True, graficar=False)
+        report = model.instancia.resultado
+        macro = report['metricas'].set_index('promedio').loc['macro']
+        metrics = {'accuracy': macro['accuracy'], 'f1_macro': macro['f1'],
+                   'precision_macro': macro['precision'], 'recall_macro': macro['recall']}
+        details = {'matriz': report['matriz_confusion'].reset_index(),
+                   'por_clase': report['reporte_clasificacion'],
+                   'predicciones': pd.DataFrame({'real': report['reales'].iloc[:, 0],
+                                                  'predicha': report['predicciones'].iloc[:, 0]})}
+        source, count = 'Acciones / validación temporal (último 20% de fechas)', len(frame)
     else:
-        history = pd.DataFrame(request.historial)
-        if config.objetivo not in history or config.fecha not in history:
-            raise ValueError('El historial de evaluación requiere fecha y casos reales futuros.')
-        history[config.fecha] = pd.to_datetime(history[config.fecha])
-        points = []
-        for row in request.registros:
-            forecast = pronosticar(model, request.historial, row)
-            truth = history
-            if config.grupo:
-                truth = truth.loc[truth[config.grupo].astype(str) == str(row[config.grupo])]
-            for h, point in enumerate(forecast['semanas'], 1):
-                match = truth.loc[truth[config.fecha] == pd.Timestamp(point['fecha']), config.objetivo]
-                if len(match) != 1 or not np.isfinite(float(match.iloc[0])):
-                    raise ValueError(f'Falta un valor real único para {point["fecha"]}.')
-                points.append({'referencia': row[config.fecha], 'fecha': point['fecha'], 'horizonte': h,
-                               'real': float(match.iloc[0]), 'prediccion': point['casos']})
-        points = pd.DataFrame(points)
-        metrics = {'mae': mean_absolute_error(points.real, points.prediccion),
-                   'rmse': float(np.sqrt(mean_squared_error(points.real, points.prediccion)))}
-        for h, group in points.groupby('horizonte'):
-            metrics[f'mae_h{h}'] = mean_absolute_error(group.real, group.prediccion)
-            metrics[f'rmse_h{h}'] = float(np.sqrt(mean_squared_error(group.real, group.prediccion)))
-        details = {'predicciones': points}
-    result = registrar(model, request.conjunto, metrics, 'Calculada', **details)
-    guardar([result])
+        frame = datos_procesados(cfg.serie)
+        frame[cfg.fecha] = pd.to_datetime(frame[cfg.fecha], errors='raise')
+        if cfg.grupo:
+            if request.ubicacion is None:
+                raise ValueError('Selecciona la ubicación que deseas evaluar.')
+            frame = frame.loc[frame[cfg.grupo].astype(str) == request.ubicacion]
+        frame = validacion_temporal(frame, cfg.fecha).reset_index(drop=True)
+        if frame[cfg.fecha].duplicated().any() or not frame[cfg.fecha].diff().dropna().eq(pd.Timedelta(days=7)).all():
+            raise ValueError('La validación requiere semanas consecutivas de una sola ubicación.')
+        x = model.scaler.transform(frame[cfg.columnas])
+        y = model.scaler_salida.transform(frame[[cfg.objetivo]])
+        # Reutilizar las ventanas de la clase; jamás ajustar escaladores al evaluar.
+        x, y = model.instancia.generar_ventanas_dengue(x, y, tamaño_ventana=26, horizonte=4)
+        if not len(x):
+            raise ValueError('Se necesitan al menos 30 semanas en la partición de validación.')
+        x, y = x[-request.limite:], y[-request.limite:]
+        model.instancia.evaluar(x=x, y=y, y_scaler=model.scaler_salida, graficar=False)
+        report = model.instancia.resultado
+        summary = report['metricas'].set_index('horizonte')
+        metrics = {'mae': summary.loc['global', 'MAE'], 'rmse': summary.loc['global', 'RMSE']}
+        for h in range(1, 5):
+            metrics[f'mae_h{h}'] = summary.loc[f'semana_{h}', 'MAE']
+            metrics[f'rmse_h{h}'] = summary.loc[f'semana_{h}', 'RMSE']
+        dates = frame[cfg.fecha].iloc[26:].tolist()
+        dates = [dates[i:i + 4] for i in range(len(dates) - 3)][-len(x):]
+        points = [{'referencia': (dates[i][0] - pd.Timedelta(weeks=1)).date().isoformat(),
+                   'fecha': dates[i][h].date().isoformat(), 'horizonte': h + 1,
+                   'real': float(report['reales'].iloc[i, h]), 'prediccion': float(report['predicciones'].iloc[i, h])}
+                  for i in range(len(x)) for h in range(4)]
+        details = {'por_horizonte': report['metricas'], 'predicciones': points}
+        source = f'{cfg.serie.split("/")[-1]} / {request.ubicacion or "serie"} / últimas {len(x)} ventanas de validación temporal'
+        count = len(x)
+    result = serializar({'id': uuid4().hex, 'modelo': model.slot, 'archivo_modelo': cfg.archivo,
+                         'identidad': model.identidad, 'conjunto': source, 'origen': 'Calculada',
+                         'fecha': datetime.now(timezone.utc).isoformat(), 'muestras': count,
+                         'metricas': metrics, **details})
+    saved = leer()
+    saved.pop('seleccion', None)
+    saved['resultados'].append(result)
+    guardar_json(ARCHIVO, saved)
     return result

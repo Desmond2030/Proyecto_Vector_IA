@@ -76,10 +76,12 @@ class TabularDataLoader:
     
 
 
-    def save_load_scaler(self, path, save = None, load = None):
+    def save_load_scaler(self, path, scaler = None, save = None, load = None):
+        
         if save:
+            scaler = scaler if scaler is not None else self._scaler
             with open(path, 'wb') as archivo:
-                pickle.dump(self._scaler, archivo)
+                pickle.dump(scaler, archivo)
                 
         if load:
             with open(path, 'rb') as archivo:

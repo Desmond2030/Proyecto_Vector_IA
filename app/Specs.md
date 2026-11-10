@@ -1,54 +1,31 @@
 <!-- ESTADO_ARCHIVO: EN_MODIFICACION -->
-# VectorIA · aplicación Streamlit
+# App VectorIA
 
-Desde `/home/hadoop/CUC/IA_Aplicada/Proyecto_VectorIA`:
+Ejecutar desde la raíz WSL: .Vector_IA_wsl/bin/python -B app/run.py.
+App en http://127.0.0.1:8501 y API en http://127.0.0.1:8000/docs.
+También se puede iniciar Streamlit por separado y configurar VECTORIA_API_URL.
 
-```bash
-.Vector_IA_wsl/bin/python -B app/run.py
-```
+## Cuatro páginas
 
-App: http://127.0.0.1:8501 · API: http://127.0.0.1:8000/docs. Ctrl+C cierra los procesos iniciados por el lanzador. Para usar otra API, iniciar Streamlit por separado con `VECTORIA_API_URL` en el entorno. No se instala ninguna dependencia nueva.
+- Inicio: presentación, datos académicos de proyecto.json y métricas vigentes consultadas a la API.
+- Exploración: Parquet procesados, filtros, tablas, barras, histogramas, cajas, dispersión, correlaciones Pearson/Spearman, dummies y asociaciones mixtas; galería de imágenes por conjunto y especie.
+- Predicción: selección/carga de modelos y escaladores, serie del modelo RNN, imagen del proyecto o cargada, fecha, ubicación y cinco campos manuales de clima/umbral. Un botón ejecuta el flujo y presenta los tres resultados juntos.
+- Evaluación: cálculo por modelo e historial consultable. La última evaluación del modelo activo actualiza Inicio automáticamente.
 
-## Páginas
+Paleta: verde, ámbar, azul y violeta, respectivamente. Tipografía y espaciado comunes; formularios arriba y resultados con el ancho disponible.
 
-- **Inicio:** portada editorial, ilustración, datos de `app/proyecto.json` y evaluaciones vigentes. No contiene métricas inventadas.
-- **Explorar:** abrir CSV/Excel/Parquet desde el proyecto o subirlo; editar y preparar una copia, filtrar y graficar con Altair. Numéricas Pearson/Spearman, numéricas más dummies y asociaciones mixtas (Dython). Seleccionar tipos semánticos, no solo tipos físicos.
-- **Predicción:** imagen, observación y contexto; flujo completo o CNN, RNN y ANN por separado. Para RNN, cargar historial y elegir fecha y ubicación.
-- **Lotes:** CSV de observaciones e imágenes vinculadas por nombre; historial separado para pronóstico. Exporta columnas originales y resultados sin sobrescribir nombres existentes.
-- **Evaluación:** importar CSV de métricas, calcular sobre etiquetas reales y elegir qué evaluación aparece en Inicio.
-- **Modelos:** elegir `.keras`/`.h5` del inventario o subir artefactos propios; configurar orden de clases/entradas y scalers. Sin modelos cargados, explorar datos sigue funcionando.
+La navegación utiliza cuatro enlaces nativos de Streamlit dentro del encabezado de la app: una fila en escritorio y dos columnas en pantallas pequeñas. La página activa se destaca con su color; los enlaces conservan contraste propio independientemente del tema.
 
-## Datos y edición
+## Datos y modelos
 
-La biblioteca de datasets vive en `st.session_state`: se conserva entre páginas y se pierde al cerrar/reiniciar la sesión. Las copias preparadas pueden descargarse. No se sobrescriben los CSV originales. `_fila_origen` permite seguir la procedencia de filas editadas. Guardar preparación utiliza `TabularDataProcessor` a través del API.
+Las copias editables de Exploración viven en la sesión, pueden descargarse y restablecerse. No modifican el historial que utiliza Predicción, que siempre procede del Parquet original procesado leído por la API.
 
-Los campos avanzados aceptan JSON, por ejemplo:
+Los selectores de modelos y escaladores se aplican explícitamente. La configuración técnica está plegada. Escaladores sin extensión pueden cargarse; deben ser los originales del modelo correspondiente. La ANN permanece pendiente si falta el suyo, conservando los resultados disponibles de CNN y RNN.
 
-```json
-{"fecha": "fecha_inicio_semana"}
-```
+Los campos manuales son umbral endémico de cuatro semanas, lluvia de 14 días, temperatura máxima, temperatura mínima y humedad. La detección CNN y la suma de las cuatro semanas RNN se incorporan automáticamente. No se sustituyen campos vacíos por cero. Al cambiar entradas o configuración debe ejecutarse de nuevo la predicción.
 
-Para tipos: `{"lluvia_mm": "float64", "provincia": "category"}`. Para mapas: `{"deteccion": {"Sí": 1, "No": 0}}`.
+## Métricas
 
-Las asociaciones muestran el número de filas completas utilizadas, las excluidas, la categoría omitida en dummies y el método por pareja. Pearson/Spearman tienen signo; V de Cramér y eta expresan intensidad sin dirección. El análisis no demuestra causalidad. Las categorías codificadas 0/1 pueden marcarse como categóricas en el modo mixto.
+Inicio presenta accuracy y F1 macro para clasificación y MAE/RMSE en casos para pronóstico. Sin evaluación correspondiente se muestra un estado vacío. Los valores no están escritos en la interfaz: proceden de api/evaluaciones.json y sobreviven al reinicio.
 
-## Ajustes habituales
-
-- Créditos y descripción: `proyecto.json`.
-- Tipografía y disposición: `assets/styles.css`.
-- Colores por página: `ui.py`.
-- Contratos entrenados: página Modelos, persistidos en `api/configuracion.json`.
-- Añadir o cambiar datos: cargar archivo y mapear entradas, sin editar código si el contrato entrenado no cambia.
-- Correlaciones: `api/datasets.py`; presentación Altair en `results.py`.
-
-El diseño usa fondo marfil, tipografía editorial y navegación superior. Inicio verde, Explorar ámbar, Predicción azul, Lotes coral, Evaluación violeta y Modelos pizarra. La ilustración de portada es conceptual; los resultados mostrados por la app proceden exclusivamente de inferencia o evaluaciones identificadas.
-
-## Estado y límites
-
-No se entrenan redes. Los módulos sin artefactos compatibles permanecen pendientes. La evaluación CNN reutiliza `evaluar()` de `src`; el API conecta la inferencia de la ANN multiclase de acciones y la RNN de pronóstico mediante sus perfiles configurados.
-
-El registro en contexto y Uso de IA se realizará únicamente por indicación posterior del desarrollador.
-
-## Ilustración
-
-`assets/portada.png` generada con la herramienta incorporada imagegen. Prompt: ilustración editorial científica de un mosquito en grafito, papel marfil con cuadrícula muy tenue, acento verde discreto, sin textos ni interfaz; proporción 4:3. Es un recurso decorativo, no una clave de identificación taxonómica.
+Evaluación informa muestra y partición utilizada. Consultar una evaluación antigua no cambia el resumen del Inicio. No hay tests ni entrenamiento desde la app.

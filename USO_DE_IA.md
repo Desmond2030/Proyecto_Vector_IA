@@ -293,3 +293,212 @@ Solo consulta
 **Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
 
 **Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Evaluación compartida de SimpleRNN y GRU
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, TensorFlow/Keras, NumPy, pandas, scikit-learn, Matplotlib y PowerShell/WSL.
+
+**Prompt utilizado:** «PLEASE IMPLEMENT THIS PLAN: Evaluación compartida para SimpleRNN y GRU». El plan autoriza únicamente `Model_Base.evaluar` y este registro, con MAE/RMSE globales y por horizonte, desescalado, baseline opcional y gráficos; excluye corregir arquitecturas, preparación de datos y notebooks.
+
+**Tareas realizadas:**
+- Implementación de `evaluar(self, y_scaler, x=None, y=None, graficar=True, y_baseline=None)` en la clase base, heredada sin sobrescrituras por ambas clases recurrentes.
+- Validación de entradas, dimensiones, valores finitos, predicciones y escalador ajustado a una variable. Uso de validación cuando se omiten ambas entradas y posibilidad de pasar prueba explícitamente.
+- Desescalado de objetivos y pronósticos sin ajustar el escalador; cálculo de MAE/RMSE en casos originales, con RMSE global como raíz del promedio de todos los errores cuadrados. Sin redondear ni recortar valores.
+- Comparación opcional con un baseline ya alineado y en casos originales, DataFrames de salida y almacenamiento de predicciones en `self._predictions`. Gráficos independientes por horizonte, sin concatenarlos como una serie continua.
+
+**Comprobaciones y límites:**
+- Ocho pruebas automatizadas aprobadas en CPU con datos de resultado conocido: predicción perfecta y contrato de salida; errores distintos por horizonte y baseline; validación por defecto sin mutación; entradas inválidas; escaladores, baseline y predicciones incompatibles; conservación de decimales y valores negativos; gráficos con uno, tres y cuatro horizontes; herencia con redes SimpleRNN y GRU mínimas asignadas mediante la propiedad `model`.
+- Las pruebas auxiliares se mantuvieron fuera del repositorio WSL. No se entrenaron redes ni se guardaron modelos. No se valida calidad predictiva, calendario ni separación temporal a partir de arrays sin fechas.
+- Comprobación de sintaxis y comparación exacta contra una copia temporal: el archivo recurrente solo cambia en el método `evaluar`. Verificación de hashes para preservar otros módulos, notebooks, requisitos, README, AGENTS y contexto. Este registro conserva íntegros sus bytes previos.
+- Los errores previos de construcción de capas, ventanas y particiones quedan fuera del alcance; no se declara operativo el flujo completo. Sin instalaciones, staging, commit o push.
+
+**Archivos modificados:** `src/Modelo_RNN_GRU.py` (únicamente `Model_Base.evaluar`) y `USO_DE_IA.md` (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Modelo_ANN unificado para clasificación y regresión
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, TensorFlow/Keras, NumPy, pandas, scikit-learn, Matplotlib y PowerShell/WSL.
+
+**Prompt utilizado:** «PLEASE IMPLEMENT THIS PLAN: Unificar Modelo_ANN para clasificación y regresión». El usuario seleccionó corregir la clase completa manteniendo los notebooks sin cambios, indicar la tarea al crear la instancia y aceptar nombres o códigos como etiquetas.
+
+**Tareas realizadas:**
+- Sustitución de las subclases Binary_Model, Regression_Model y Clasification_model por una clase concreta Modelo_ANN(tipo, categorias=None, umbral=0.5), conservando la herencia del procesador tabular y el encadenamiento mediante return self.
+- Codificación de etiquetas con orden explícito o aprendido de entrenamiento, variables de entrada ordenadas y predicciones con etiquetas originales, probabilidades e índices conservados, incluidas fechas repetidas.
+- Separación temporal por fechas únicas por defecto, alternativa aleatoria explícita, escalado ajustado únicamente con entrenamiento y copias originales de las particiones. La prueba final se proporciona externamente; no se crean ventanas ni se escalan automáticamente los objetivos.
+- Configuración de salida, pérdida y métricas por tarea; corrección de pesos de clase, callbacks, historial y medición del tiempo de entrenamiento. Reparticionar invalida el modelo configurado para evitar conservar pesos con una nueva correspondencia de categorías.
+- Predicción compartida y evaluación con una inferencia por llamada. Clasificación: accuracy, precision/recall/F1 por clase y promedios macro/ponderado, soporte y matriz de confusión. Regresión: MAE/RMSE globales y por objetivo, desescalado opcional y gráficos. Validaciones de entradas, índices, categorías, probabilidades y configuración.
+- Documentación de la nueva interfaz y migración en docstrings; no se conserva compatibilidad con imports de las subclases eliminadas.
+
+**Comprobaciones y límites:**
+- 16 pruebas automatizadas aprobadas, con métricas conocidas para los tres tipos de tarea, códigos y nombres, clases ausentes, umbral, índices repetidos, escalado sin reajuste, partición temporal por escenarios, errores de entrada/configuración, desescalado y gráficos.
+- Tres redes pequeñas entrenadas una época cada una en CPU; predicción y evaluación completadas. La ejecución limitó la afinidad a dos CPU únicamente para el proceso de pruebas. Sin checkpoints ni entrenamiento sobre datos reales del proyecto.
+- Comprobación de integración por lectura del archivo procesado de acciones: 1.645 filas de entrenamiento (última fecha 2023-04-23) y 415 de validación (primera fecha 2023-04-30), siete entradas y las cuatro categorías de acciones, sin fechas compartidas.
+- Persisten avisos internos de TensorFlow sobre use_unbounded_threadpool y retracing durante la creación de múltiples modelos de prueba; no impidieron aprobar las comprobaciones. No se cambiaron versiones ni dependencias para ocultarlos.
+- Verificación sintáctica de la clase y pruebas. El inventario de hashes detectó también un cambio concurrente en src/Modelo_RNN_GRU.py: el agente no escribió ese archivo ni revirtió ese cambio. Los restantes archivos previamente inventariados, excepto Modelo_ANN.py, conservaban su hash al cerrar la revisión antes de añadir esta entrada. Se preservan los cambios previos del usuario y los bytes anteriores del registro. El whitespace preexistente en Tabular_Data_Loader.py permanece sin cambios.
+- El agente no modificó notebooks, CNN, RNN, datos, modelos guardados ni configuración del entorno. El notebook ANN heredado todavía requiere una migración separada porque importa Binary_Model. Sin staging, commit ni push. Estas pruebas validan funcionamiento, no calidad predictiva ni cumplimiento de metas académicas.
+
+**Archivos modificados por el agente:** src/Modelo_ANN.py, tests/test_modelo_ann.py (nuevo) y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Comparación SimpleRNN y GRU en el notebook recurrente
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, pandas, NumPy, scikit-learn, Matplotlib, nbformat y PowerShell/WSL.
+
+**Prompt utilizado:** «En el notebook del Modelo_ RNN crea una comparacion entre modelos para ver cual tienen mejoser metricas, si los RNN simples o las GRU».
+
+**Tareas realizadas:**
+- Sustitución de las cuatro evaluaciones heredadas de clasificación de imágenes por una sección de comparación de SimpleRNN y GRU, separada para los conjuntos nacional real y provincial sintético.
+- Evaluación de pesos actuales en memoria con el escalador propio del objetivo, comprobación de entrenamiento previo, igualdad de arrays de entrenamiento/validación, orden de columnas y parámetros de escalado, y verificación de objetivos desescalados coincidentes.
+- Tablas de MAE/RMSE globales y por horizonte, dos figuras comparativas, ganador por métrica/horizonte y mejora porcentual de GRU respecto a SimpleRNN. Empates con tolerancia numérica y referencia cero tratados expresamente. No se mezclan métricas entre datasets ni se declara un ganador único cuando MAE y RMSE difieren.
+- Advertencia contextual: las ventanas provinciales actuales mezclan provincias; su comparación se identifica como diagnóstica y sus salidas como pasos, no semanas. No se modificó la generación de ventanas ni se atribuye validez temporal a esos resultados.
+- Correcciones mínimas del notebook para ejecutar el flujo: imports faltantes, llamada directa al entrenamiento GRU provincial, curvas mae/val_mae en lugar de accuracy y cuatro rutas distintas de checkpoint para evitar sobrescrituras futuras entre experimentos. Los checkpoints existentes no se modificaron.
+- Conservación de las demás celdas y metadatos; limpieza de las salidas y contadores únicamente en las celdas de código modificadas para evitar mostrar resultados antiguos como nuevos.
+
+**Comprobaciones y límites:**
+- Validación nbformat y compilación de todas las celdas de código. Ejecución de la sección nueva con objetos de prueba que usan el método evaluar real extraído del módulo, predicciones deterministas y escaladores conocidos. Comprobados valores MAE/RMSE, ganadores opuestos por conjunto, mejora porcentual, empates, referencia cero y una inferencia por modelo.
+- Comprobado el rechazo de arrays diferentes, escaladores diferentes, columnas en distinto orden y modelos sin historial de entrenamiento. Renderizado e inspección visual de ambas figuras con datos sintéticos; no se insertaron esos valores ni gráficos de prueba como resultados en el notebook.
+- Verificación por hashes: ningún módulo, otro notebook ni prueba existente cambió durante esta intervención. Las celdas fuera del alcance y los metadatos generales conservan su contenido. Registro anterior preservado íntegramente.
+- No se ejecutó entrenamiento ni el notebook completo; para obtener los ganadores reales deben existir los cuatro modelos entrenados en memoria y ejecutarse la nueva sección. Solo se encontró un checkpoint compartido, insuficiente para atribuir cuatro resultados a arquitecturas/datasets distintos. La comparación es de validación, no prueba final ni significancia estadística.
+- No se modificaron datos, modelos guardados, dependencias ni arquitecturas; sin staging, commit o push.
+
+**Archivos modificados:** notebooks/3_Modelo_RNN_GRU.ipynb y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Adaptación del notebook ANN al dataset de acciones
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, TensorFlow/Keras, pandas, NumPy, scikit-learn, Matplotlib, nbformat y PowerShell/WSL.
+
+**Prompt utilizado:** «Adapta el notebook 3_Modelo_ANN.ipynb para trabajar sobre vectoria_acciones en la carpeta de data procesada con la clase src/Modelo_ANN.py , no cambies los parametros solo integra los cambios y adaptalo a la linea del proyecto actual».
+
+**Tareas realizadas:**
+- Adaptación de notebooks/3_Modelo_ANN.ipynb al archivo data/proceced/archivos_parquet/vectoria_acciones.parquet y a Modelo_ANN(tipo='multiclase'), con las cuatro categorías de recomendaciones en orden explícito y siete entradas numéricas del archivo procesado. Se mantiene escenario como metadato y la fecha como índice de partición.
+- Sustitución de rutas, imports y atributos del modelo binario heredado por la API actual: particiones temporales agrupadas por fecha, escalador ajustado solo en entrenamiento, configuración, entrenamiento, evaluación y ejemplo de inferencia sin etiquetas.
+- Conservación de semilla 45, capas=6, PReLU, Adam, dropout=0.5, n_down=0.5, pendiente LeakyReLU=None, epochs=600, batch_size=800, w_balance=True, w_dict=None, beta=0.999 y parámetros de EarlyStopping/ModelCheckpoint. El cálculo de pesos con beta continúa sin aplicarse, igual que antes, al mantenerse w_dict=None.
+- Únicas adaptaciones de configuración de salida necesarias para la clasificación de cuatro acciones: binary_crossentropy pasa a sparse_categorical_crossentropy, n_output=1 pasa a len(categorias_acciones)=4 y sigmoid pasa a softmax. La ruta del checkpoint corresponde ahora a ANN_Models/Acciones/checkpoints/ann_acciones.keras.
+- Evaluación con métricas macro/ponderadas, detalle por clase, matriz de confusión y tabla de errores/probabilidades. Asignación por posición para conservar las fechas repetidas sin multiplicar filas al unir por fecha. La inferencia de ejemplo utiliza cinco entradas de validación sin etiquetas y no se presenta como datos nuevos reales.
+- Guardado opcional comentado de modelo, escalador y metadatos de inferencia; eliminación de las salidas antiguas de abandono de clientes. Se conservan cantidad e identificadores de celdas y metadatos generales del notebook.
+
+**Comprobaciones y límites:**
+- Validación nbformat y compilación de todas las celdas. Comparación AST de los parámetros con el notebook original: solo cambian los tres parámetros obligatorios de salida/pérdida; los parámetros de entrenamiento, semilla y callbacks permanecen iguales, excepto la ruta de checkpoint.
+- Ejecución de carga, particionado y escalado con el Parquet procesado: 1.645 filas de entrenamiento, 415 de validación, siete entradas, cuatro clases y ninguna fecha compartida. Verificación de máximos del escalador contra entrenamiento.
+- Compilación de la arquitectura real en CPU; durante la prueba se sustituyó start_training por una función controlada que registra sus argumentos y no entrena. Evaluación y predicción verificadas con probabilidades controladas, incluyendo 415 filas con índices/escenarios preservados, cuatro clases en el reporte y cinco filas de inferencia. No se insertaron métricas ni historiales de prueba en el notebook.
+- No se ejecutaron las 600 épocas, no se guardaron modelos ni se modificó src/Modelo_ANN.py. El directorio de checkpoint usado en la prueba fue temporal. El notebook evaluará validación al ejecutarse; no se declara una prueba final independiente ni cumplimiento de la meta del 85 %.
+- Verificación por hashes: solo cambió este notebook entre los módulos, notebooks y pruebas inventariados. Registro previo preservado íntegramente. Sin cambios en datos, arquitecturas del módulo, dependencias, staging, commit ni push.
+
+**Archivos modificados:** notebooks/3_Modelo_ANN.ipynb y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Restauración mínima de Modelo_ANN e integración del notebook
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, TensorFlow/Keras, pandas, NumPy, scikit-learn, Matplotlib, unittest, nbformat y PowerShell/WSL.
+
+**Prompts utilizados:** «retorna la clase a como estaba antes y solo unifica las formas de hacer predicciones y evaluacion segun el tipo de salida del modelo ese metodo es el unico cambio de la clase»; aclaración del usuario: «En Modelo_ANN(tipo=...), con ese ajuste mínimo adicional al constructor»; continuación: «integra los cambios al notebok de 3_Modelo_ANN.ipynb».
+
+**Corrección de alcance respecto de la intervención anterior:**
+- Se retira la refactorización amplia de la clase registrada anteriormente. Se recuperó el respaldo previo de Modelo_ANN.py y se verificó byte a byte la igualdad del contenido original anterior al método de predicción, salvo la firma __init__(self, tipo) y la asignación self.tipo = tipo.
+- set_scaled_partitions, set_val_data_as_data, preparar_experimento, model_flow_settings, start_training, propiedades e imports recuperan su implementación original, incluidos sus fallos previos. Se mantienen eliminadas las tres subclases, conforme a la unificación solicitada.
+- make_prediction reúne predicción y evaluación con eval=True para binaria, multiclase y regresión; no se añaden helpers ni un segundo método evaluar a la clase. Usa validación por defecto, acepta datos externos, conserva índices y proporciona métricas y probabilidades según la tarea. El umbral binario predeterminado conserva el comportamiento anterior: probabilidad > 0.8.
+
+**Integración del notebook:**
+- Constructor actualizado a Modelo_ANN(tipo='multiclase'); orden de categorías y codificación se mantienen en el notebook. Preparación temporal y escalado solo con entrenamiento se realizan en sus celdas, sin alterar el método de particiones original de la clase.
+- Se conservó la separación entre configuración y entrenamiento que el usuario había añadido, así como las 20 celdas, sus tipos e identificadores. El notebook llama directamente a model.fit para evitar las referencias a atributos y variables indefinidos de start_training original, sin volver a modificarlo.
+- Después de construir la arquitectura original, se recompila conservando optimizador y pérdida y usando sparse_categorical_accuracy, compatible con las etiquetas enteras. Se construye la red explícitamente antes de mostrar summary. No se cambian los parámetros de capas, activaciones, pérdida, salida, dropout, reducción ni optimizador presentes en el notebook inmediatamente anterior.
+- Se conservan semilla 45, 600 épocas, batch 800, beta 0.999, w_balance=True, w_dict=None, cálculo de pesos balanceados con entrenamiento y los callbacks. La evaluación e inferencia utilizan exclusivamente make_prediction; se adaptan los nombres de categorías y el guardado opcional a los atributos originales.
+
+**Comprobaciones y límites:**
+- Seis pruebas del método único aprobadas: binaria con umbral anterior, multiclase con índices/nombres y clase ausente, regresión simple y multiobjetivo con desescalado, conservación de índices repetidos/datos/orden de entradas, una inferencia por llamada, métricas conocidas, gráficos y errores de entrada.
+- Validación nbformat y compilación de todas las celdas. Comparación AST confirma igualdad de los argumentos de model_flow_settings y semilla, y de epochs, batch_size y callbacks frente al notebook respaldado antes de esta corrección.
+- Ejecución de carga y preparación del Parquet real del proyecto: 1.645 filas de entrenamiento y 415 de validación, siete entradas y cuatro clases, fechas separadas y escalador ajustado solo con entrenamiento.
+- Construcción de la arquitectura original y una inferencia real sobre dos filas en CPU para comprobar cuatro probabilidades válidas. La llamada fit se sustituyó durante la prueba por una respuesta controlada; evaluación y tablas se probaron con predicciones controladas. Sin entrenamiento completo, checkpoints ni métricas de prueba insertadas en el notebook.
+- La primera verificación detectó que la arquitectura original se construye de forma diferida; se añadió build al notebook y la comprobación final pasó. No se corrigió la arquitectura dentro de la clase.
+- Las pruebas extensas de la refactorización descartada fueron sustituidas por pruebas del método pedido. Hashes confirman cambios únicamente en la clase, este notebook y esas pruebas antes de añadir el registro. Otros módulos/notebooks se conservaron. No se realizaron cambios de datos, dependencias, staging, commit ni push.
+
+**Archivos modificados:** src/Modelo_ANN.py, notebooks/3_Modelo_ANN.ipynb, tests/test_modelo_ann.py y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Retirada del build explícito añadido al notebook ANN
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python y PowerShell/WSL.
+
+**Prompts utilizados:** «Porque ahora en necesario .build cuando antes no lo era, quiero que es fujo de creacion del modelo se mantenga como lo tenia»; aclaración: «El unico metodo a manipular era el de predicciones y validacion».
+
+**Tareas realizadas:**
+- Retirada únicamente de la llamada modelo_acciones.model.build(...) añadida por el agente en la celda de configuración del notebook. Se conserva summary y se permite que Keras construya los pesos al recibir datos, como en el flujo original.
+- Ningún método de src/Modelo_ANN.py fue modificado en esta intervención. Se preserva expresamente el parámetro metrics que el usuario añadió a model_flow_settings, junto con sus demás cambios.
+- Se limpió la salida antigua únicamente de la celda afectada. No se añadieron capas Input, recompilaciones ni llamadas de inferencia para forzar la construcción.
+
+**Comprobaciones y límites:**
+- Comprobación sintáctica de la celda modificada, igualdad de las demás celdas y hash idéntico del módulo antes y después. No se ejecutó entrenamiento ni se modificaron parámetros o modelos guardados.
+- Antes de recibir datos, summary puede mostrar capas unbuilt; esto no obliga a llamar build manualmente para entrenar. Esta nota rectifica la necesidad aparente de build introducida por la intervención anterior.
+- Registro anterior conservado íntegramente. Sin staging, commit ni push.
+
+**Archivos modificados:** notebooks/3_Modelo_ANN.ipynb (una línea de código retirada y salida de esa celda limpiada) y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
+
+
+## Intervención — Notebook ANN alineado con el uso de clases del RNN
+
+**Fecha:** 2026-11-09 (America/Costa_Rica).
+
+**Herramienta:** ChatGPT (Codex), Python, TensorFlow/Keras, pandas, NumPy, scikit-learn, Matplotlib, unittest, nbformat y PowerShell/WSL.
+
+**Prompts utilizados:** «toma de ejemplo el notebook de RNN para formar la estructura del notebook de ANN y entender como es que se implementan las clases en cada uno para seguir esa linea». El usuario autorizó explícitamente «Sí, correcciones mínimas para usar los métodos de la clase» y posteriormente indicó «prosige con lo anterior».
+
+**Tareas realizadas:**
+- Reorganización de 3_Modelo_ANN.ipynb siguiendo las secciones y llamadas de 3_Modelo_RNN_GRU.ipynb: librerías, instancia, load_data, definición/codificación de variables, set_scaled_partitions, inspección de arrays, preparar_experimento().model_flow_settings().model.summary(), start_training, curvas y make_prediction para evaluación.
+- Retirada de la partición manual y de llamadas adicionales a model.compile/model.fit. Sin build explícito. La métrica sparse_categorical_accuracy se pasa al parámetro metrics que el usuario ya había añadido a model_flow_settings.
+- Uso del Parquet procesado de acciones y del método heredado set_categorical_columns, excluyendo escenario como entrada. Se conserva el orden de las cuatro recomendaciones y se recuperan sus nombres al evaluar.
+- Corrección autorizada de set_scaled_partitions: división temporal 80/20 por fechas únicas con orden estable, fechas completas en un solo conjunto y escalado únicamente con entrenamiento. El notebook indica stratify=False. Firma y valores predeterminados preservados.
+- Corrección autorizada de start_training: cálculo de pesos desde y_train en lugar de atributos de archivos inexistentes, prioridad de w_dict y ausencia de pesos al desactivar balanceo; cálculo del tiempo total antes de horas/minutos/segundos. Firma y llamada fit conservadas.
+- No se modificó ningún otro método de la clase. Se preservaron capas=6, PReLU, Adam, dropout=0.5, n_down=0.5, softmax con cuatro salidas, sparse_categorical_crossentropy, semilla 45, beta 0.999, epochs=600, batch_size=800, w_balance=True, w_dict=None y parámetros de los callbacks. Los pesos con beta siguen siendo un cálculo de referencia no aplicado.
+
+**Comprobaciones y límites:**
+- Ocho pruebas unitarias aprobadas: seis del método unificado y dos para partición temporal/escalado y pesos/tiempo del entrenamiento corregido.
+- Validación nbformat y compilación de las celdas. Comparación AST confirma hiperparámetros, semilla y callbacks preservados, y cambios limitados a los cuerpos de los dos métodos autorizados, sin alterar sus firmas ni los demás miembros de la clase.
+- Ejecución de carga/codificación/partición con los métodos reales: 1.645 filas de entrenamiento, 415 de validación, siete entradas y cuatro clases. Inferencia en CPU sobre dos filas para comprobar la salida softmax.
+- La prueba del notebook ejecutó start_training sustituyendo únicamente model.fit por una respuesta controlada, comprobando sus argumentos y pesos. Evaluación y tabla de errores verificadas con predicciones controladas, 415 filas e índices preservados. No se ejecutaron las 600 épocas ni se guardaron modelos o resultados de prueba dentro del notebook.
+- La comprobación final quedó inicialmente bloqueada por un fallo de revisión automática asociado a un límite de uso. Tras la indicación de continuar, se ejecutó satisfactoriamente con el mecanismo de permisos habitual.
+- Al cerrar la revisión aparecieron salidas guardadas por una ejecución externa del notebook. Se verificó que el código de todas las celdas seguía exactamente igual al validado y se conservaron esas salidas, sin atribuir sus resultados al agente.
+- Hashes y revisión del alcance muestran cambios únicamente en la clase, notebook ANN y pruebas antes de añadir esta entrada. No se modificaron el notebook RNN, datos, modelos guardados ni dependencias. Registro previo preservado; sin staging, commit ni push.
+
+**Archivos modificados por el agente:** notebooks/3_Modelo_ANN.ipynb, src/Modelo_ANN.py (solo set_scaled_partitions y start_training), tests/test_modelo_ann.py (dos pruebas añadidas) y USO_DE_IA.md (solo adición).
+
+**Reflexión sobre cómo la IA ayudó en el aprendizaje:** Pendiente de completar por el desarrollador.
+
+**Modificaciones realizadas por el desarrollador al código/análisis generado:** Pendiente de completar por el desarrollador.
