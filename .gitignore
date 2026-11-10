@@ -1,0 +1,46 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+.Vector_IA_wsl/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# TensorBoard y logs
+logs/
+*.log
+
+# Variables de entorno y credenciales
+.env
+.env.*
+kaggle.json
+
+# Editores e IDE
+.vscode/
+.idea/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+*.Zone.Identifier
+
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data
+
+/data/
+
+
+
+# Agentes
+/.agents
